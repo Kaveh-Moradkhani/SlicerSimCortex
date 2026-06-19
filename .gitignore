@@ -1,0 +1,31 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Slicer / Qt temporary files
+*.autosave
+*.tmp
+
+# Build folders
+-build/
+build/
+CMakeFiles/
+CMakeCache.txt
+Makefile
+cmake_install.cmake
+
+# Local test outputs
+Testing/Temporary/
+outputs/
+runs/
+
+# IDE/editor
+.vscode/
+.idea/
+*~
+
+# Local backup files created during development
+*.bak
+*.bak_*
+*.bak_phase*
