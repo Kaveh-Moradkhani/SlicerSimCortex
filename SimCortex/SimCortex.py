@@ -33,9 +33,6 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
 
         self.logic = SimCortexLogic()
 
-        # -------------------------
-        # Input section
-        # -------------------------
         inputCollapsibleButton = ctk.ctkCollapsibleButton()
         inputCollapsibleButton.text = "Input"
         self.layout.addWidget(inputCollapsibleButton)
@@ -62,50 +59,53 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.sessionLineEdit.text = "ses-01"
         inputFormLayout.addRow("Session ID: ", self.sessionLineEdit)
 
-        # -------------------------
-        # Backend settings section
-        # -------------------------
         backendCollapsibleButton = ctk.ctkCollapsibleButton()
         backendCollapsibleButton.text = "Backend settings"
         self.layout.addWidget(backendCollapsibleButton)
 
         backendFormLayout = qt.QFormLayout(backendCollapsibleButton)
 
-        self.pythonExecutableLineEdit = qt.QLineEdit()
-        self.pythonExecutableLineEdit.setPlaceholderText(
-            "/path/to/simcortex-env/bin/python"
+        self.pythonExecutableLineEdit = self.createPathSelector(
+            backendFormLayout,
+            "SimCortex Python: ",
+            "/path/to/simcortex-env/bin/python",
+            self.onBrowsePythonExecutable,
         )
-        backendFormLayout.addRow("SimCortex Python: ", self.pythonExecutableLineEdit)
 
-        self.projectRootLineEdit = qt.QLineEdit()
-        self.projectRootLineEdit.setPlaceholderText(
-            "/path/to/SimCortex"
+        self.projectRootLineEdit = self.createPathSelector(
+            backendFormLayout,
+            "SimCortex project root: ",
+            "/path/to/SimCortex",
+            self.onBrowseProjectRoot,
         )
-        backendFormLayout.addRow("SimCortex project root: ", self.projectRootLineEdit)
 
-        self.mniTemplateLineEdit = qt.QLineEdit()
-        self.mniTemplateLineEdit.setPlaceholderText(
-            "/path/to/MNI152_T1_1mm.nii.gz"
+        self.mniTemplateLineEdit = self.createPathSelector(
+            backendFormLayout,
+            "MNI template: ",
+            "/path/to/MNI152_T1_1mm.nii.gz",
+            self.onBrowseMniTemplate,
         )
-        backendFormLayout.addRow("MNI template: ", self.mniTemplateLineEdit)
 
-        self.segCheckpointLineEdit = qt.QLineEdit()
-        self.segCheckpointLineEdit.setPlaceholderText(
-            "/path/to/seg_best_dice.pt"
+        self.segCheckpointLineEdit = self.createPathSelector(
+            backendFormLayout,
+            "Seg checkpoint: ",
+            "/path/to/seg_best_dice.pt",
+            self.onBrowseSegCheckpoint,
         )
-        backendFormLayout.addRow("Seg checkpoint: ", self.segCheckpointLineEdit)
 
-        self.deformCheckpointLineEdit = qt.QLineEdit()
-        self.deformCheckpointLineEdit.setPlaceholderText(
-            "/path/to/deform_best_model.pth"
+        self.deformCheckpointLineEdit = self.createPathSelector(
+            backendFormLayout,
+            "Deform checkpoint: ",
+            "/path/to/deform_best_model.pth",
+            self.onBrowseDeformCheckpoint,
         )
-        backendFormLayout.addRow("Deform checkpoint: ", self.deformCheckpointLineEdit)
 
-        self.outputRootLineEdit = qt.QLineEdit()
-        self.outputRootLineEdit.setPlaceholderText(
-            "/path/to/output_root"
+        self.outputRootLineEdit = self.createPathSelector(
+            backendFormLayout,
+            "Output root: ",
+            "/path/to/output_root",
+            self.onBrowseOutputRoot,
         )
-        backendFormLayout.addRow("Output root: ", self.outputRootLineEdit)
 
         self.deviceComboBox = qt.QComboBox()
         self.deviceComboBox.addItems(["cuda:0", "cuda:1", "cpu"])
@@ -118,9 +118,6 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         )
         backendFormLayout.addRow("Export native surfaces: ", self.exportNativeCheckBox)
 
-        # -------------------------
-        # Run section
-        # -------------------------
         runCollapsibleButton = ctk.ctkCollapsibleButton()
         runCollapsibleButton.text = "Run"
         self.layout.addWidget(runCollapsibleButton)
@@ -142,13 +139,98 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.layout.addStretch(1)
 
         self.log("SimCortex module loaded.")
-        self.log("Phase 2.2 UI is active. Backend execution is not implemented yet.")
+        self.log("Phase 2.4 UI is active. Browse buttons are available.")
+        self.log("Backend execution is not implemented yet.")
+
+    def createPathSelector(self, formLayout, label, placeholder, browseCallback):
+        rowWidget = qt.QWidget()
+        rowLayout = qt.QHBoxLayout(rowWidget)
+        rowLayout.setContentsMargins(0, 0, 0, 0)
+
+        lineEdit = qt.QLineEdit()
+        lineEdit.setPlaceholderText(placeholder)
+        rowLayout.addWidget(lineEdit)
+
+        browseButton = qt.QPushButton("Browse")
+        browseButton.setMaximumWidth(80)
+        browseButton.connect("clicked(bool)", browseCallback)
+        rowLayout.addWidget(browseButton)
+
+        formLayout.addRow(label, rowWidget)
+        return lineEdit
+
+    def normalizeDialogResult(self, result):
+        if isinstance(result, tuple) or isinstance(result, list):
+            if len(result) == 0:
+                return ""
+            return result[0]
+        return result
+
+    def browseFile(self, title, lineEdit, fileFilter="All files (*)"):
+        currentPath = lineEdit.text.strip()
+        startDir = os.path.dirname(currentPath) if currentPath else os.path.expanduser("~")
+        selected = qt.QFileDialog.getOpenFileName(
+            slicer.util.mainWindow(), title, startDir, fileFilter
+        )
+        selected = self.normalizeDialogResult(selected)
+        if selected:
+            lineEdit.text = selected
+
+    def browseDirectory(self, title, lineEdit):
+        currentPath = lineEdit.text.strip()
+        startDir = currentPath if currentPath else os.path.expanduser("~")
+        selected = qt.QFileDialog.getExistingDirectory(
+            slicer.util.mainWindow(), title, startDir
+        )
+        selected = self.normalizeDialogResult(selected)
+        if selected:
+            lineEdit.text = selected
+
+    def onBrowsePythonExecutable(self, checked=False):
+        self.browseFile(
+            "Select SimCortex Python executable",
+            self.pythonExecutableLineEdit,
+            "Python executable (*)",
+        )
+
+    def onBrowseProjectRoot(self, checked=False):
+        self.browseDirectory(
+            "Select SimCortex project root",
+            self.projectRootLineEdit,
+        )
+
+    def onBrowseMniTemplate(self, checked=False):
+        self.browseFile(
+            "Select MNI template",
+            self.mniTemplateLineEdit,
+            "NIfTI files (*.nii *.nii.gz);;All files (*)",
+        )
+
+    def onBrowseSegCheckpoint(self, checked=False):
+        self.browseFile(
+            "Select segmentation checkpoint",
+            self.segCheckpointLineEdit,
+            "PyTorch checkpoint (*.pt *.pth);;All files (*)",
+        )
+
+    def onBrowseDeformCheckpoint(self, checked=False):
+        self.browseFile(
+            "Select deform checkpoint",
+            self.deformCheckpointLineEdit,
+            "PyTorch checkpoint (*.pt *.pth);;All files (*)",
+        )
+
+    def onBrowseOutputRoot(self, checked=False):
+        self.browseDirectory(
+            "Select output root folder",
+            self.outputRootLineEdit,
+        )
 
     def log(self, message):
         self.logTextEdit.append(message)
         slicer.app.processEvents()
 
-    def onApplyButton(self):
+    def onApplyButton(self, checked=False):
         params = {
             "inputVolume": self.inputVolumeSelector.currentNode(),
             "subject": self.subjectLineEdit.text.strip(),
