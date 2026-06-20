@@ -35,6 +35,8 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         ScriptedLoadableModuleWidget.setup(self)
 
         self.logic = SimCortexLogic()
+        self.pipelineProcess = None
+        self.currentRunInfo = None
 
         # -------------------------
         # Input section
@@ -155,9 +157,14 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         runLayout.addWidget(self.validateBackendButton)
 
         self.applyButton = qt.QPushButton("Apply")
-        self.applyButton.toolTip = "Run SimCortex. Full backend execution will be added in Phase 3."
+        self.applyButton.toolTip = "Run SimCortex using the external backend environment."
         self.applyButton.enabled = True
         runLayout.addWidget(self.applyButton)
+
+        self.cancelButton = qt.QPushButton("Cancel")
+        self.cancelButton.toolTip = "Cancel the running SimCortex backend process."
+        self.cancelButton.enabled = False
+        runLayout.addWidget(self.cancelButton)
 
         self.logTextEdit = qt.QTextEdit()
         self.logTextEdit.readOnly = True
@@ -166,13 +173,14 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
 
         self.validateBackendButton.connect("clicked(bool)", self.onValidateBackendButton)
         self.applyButton.connect("clicked(bool)", self.onApplyButton)
+        self.cancelButton.connect("clicked(bool)", self.onCancelButton)
 
         self.layout.addStretch(1)
 
         self.log("SimCortex module loaded.")
         self.log("Phase 2.6 UI is active.")
         self.log("Backend validation is available.")
-        self.log("Full pipeline execution is not implemented yet.")
+        self.log("Full pipeline execution is available via Apply.")
 
     # -------------------------
     # UI helpers
@@ -317,7 +325,27 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             slicer.util.errorDisplay("Backend environment validation failed. See log box for details.")
             self.log("Backend environment validation FAILED.")
 
+    def setRunning(self, running):
+        self.applyButton.enabled = not running
+        self.validateBackendButton.enabled = not running
+        self.cancelButton.enabled = running
+
+    def onCancelButton(self, checked=False):
+        if self.pipelineProcess is None:
+            return
+
+        self.log("Cancel requested. Terminating backend process...")
+        self.pipelineProcess.terminate()
+
+        if not self.pipelineProcess.waitForFinished(5000):
+            self.log("Backend did not terminate quickly. Killing process...")
+            self.pipelineProcess.kill()
+
     def onApplyButton(self, checked=False):
+        if self.pipelineProcess is not None:
+            slicer.util.errorDisplay("A SimCortex backend process is already running.")
+            return
+
         params = self.collectParameters()
 
         ok, errorMessage = self.logic.validateParameters(params)
@@ -328,12 +356,79 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
 
         assets = self.logic.getAssetsPaths(params["assetsRoot"])
 
-        self.log("Validation passed.")
-        self.log("Resolved assets directory: " + assets["assetsRoot"])
-        self.log("Resolved MNI template: " + assets["mniTemplate"])
-        self.log("Resolved segmentation checkpoint: " + assets["segCheckpoint"])
-        self.log("Resolved deform checkpoint: " + assets["deformCheckpoint"])
-        self.log("Full backend execution will be implemented in Phase 3.")
+        try:
+            runInfo = self.logic.preparePipelineRun(params, assets)
+        except Exception as exc:
+            slicer.util.errorDisplay("Failed to prepare SimCortex run: " + str(exc))
+            self.log("Failed to prepare SimCortex run: " + str(exc))
+            return
+
+        self.currentRunInfo = runInfo
+
+        self.log("")
+        self.log("Starting SimCortex pipeline...")
+        self.log("Saved input T1w: " + runInfo["t1wPath"])
+        self.log("Output root: " + params["outputRoot"])
+        self.log("Work root: " + runInfo["workRoot"])
+        self.log("Command:")
+        self.log(runInfo["commandString"])
+
+        process = qt.QProcess()
+        process.setProcessChannelMode(qt.QProcess.SeparateChannels)
+        process.setWorkingDirectory(params["projectRoot"])
+        process.setProcessEnvironment(
+            self.logic.createExternalProcessEnvironment(params["pythonExecutable"])
+        )
+
+        process.connect("readyReadStandardOutput()", self.onPipelineReadyReadStandardOutput)
+        process.connect("readyReadStandardError()", self.onPipelineReadyReadStandardError)
+        process.connect("finished(int, QProcess::ExitStatus)", self.onPipelineFinished)
+
+        self.pipelineProcess = process
+        self.setRunning(True)
+
+        process.start(params["pythonExecutable"], runInfo["args"])
+
+        if not process.waitForStarted(10000):
+            self.setRunning(False)
+            self.pipelineProcess = None
+            slicer.util.errorDisplay("Failed to start SimCortex backend process.")
+            self.log("Failed to start backend process.")
+
+    def onPipelineReadyReadStandardOutput(self):
+        if self.pipelineProcess is None:
+            return
+        text = self.qByteArrayToString(self.pipelineProcess.readAllStandardOutput())
+        if text:
+            self.log(text.rstrip())
+
+    def onPipelineReadyReadStandardError(self):
+        if self.pipelineProcess is None:
+            return
+        text = self.qByteArrayToString(self.pipelineProcess.readAllStandardError())
+        if text:
+            self.log("STDERR: " + text.rstrip())
+
+    def onPipelineFinished(self, exitCode, exitStatus):
+        self.setRunning(False)
+
+        runInfo = self.currentRunInfo
+        self.pipelineProcess = None
+        self.currentRunInfo = None
+
+        self.log("")
+        self.log("SimCortex backend process finished.")
+        self.log("Exit code: " + str(exitCode))
+
+        if exitCode == 0:
+            self.log("Pipeline completed successfully.")
+            if runInfo:
+                self.log("Expected final surface directory:")
+                self.log(runInfo["finalSurfaceDir"])
+                self.log("Surface loading will be implemented in Phase 4.")
+        else:
+            slicer.util.errorDisplay("SimCortex backend failed. See log box for details.")
+            self.log("Pipeline failed.")
 
 
 class SimCortexLogic(ScriptedLoadableModuleLogic):
@@ -444,6 +539,107 @@ class SimCortexLogic(ScriptedLoadableModuleLogic):
             return False, "Output root folder does not exist."
 
         return True, ""
+
+    def createExternalProcessEnvironment(self, pythonExecutable):
+        """
+        Create a clean environment for running external SimCortex Python.
+
+        This avoids leaking Slicer's PYTHONHOME/PYTHONPATH into the conda
+        environment, which previously caused Python 3.10 to accidentally use
+        Slicer's Python 3.9 libraries.
+        """
+        systemEnv = qt.QProcessEnvironment.systemEnvironment()
+
+        env = qt.QProcessEnvironment()
+        for key in [
+            "HOME",
+            "USER",
+            "LOGNAME",
+            "SHELL",
+            "PATH",
+            "LANG",
+            "LC_ALL",
+            "CUDA_VISIBLE_DEVICES",
+            "LD_LIBRARY_PATH",
+        ]:
+            value = systemEnv.value(key)
+            if value:
+                env.insert(key, value)
+
+        pythonDir = os.path.dirname(pythonExecutable)
+        condaPrefix = os.path.dirname(pythonDir)
+
+        env.insert("CONDA_PREFIX", condaPrefix)
+        env.insert("PATH", pythonDir + os.pathsep + env.value("PATH"))
+
+        return env
+
+    def preparePipelineRun(self, params, assets):
+        subject = self.normalizeSubject(params["subject"])
+        session = self.normalizeSession(params["session"])
+
+        outputRoot = os.path.abspath(params["outputRoot"])
+        workRoot = os.path.join(outputRoot, "work")
+        inputDir = os.path.join(outputRoot, "_slicer_inputs", subject, session, "anat")
+        os.makedirs(inputDir, exist_ok=True)
+
+        t1wPath = os.path.join(inputDir, f"{subject}_{session}_T1w.nii.gz")
+
+        ok = slicer.util.saveNode(params["inputVolume"], t1wPath)
+        if not ok:
+            raise RuntimeError("Could not save selected input volume as NIfTI: " + t1wPath)
+
+        scriptPath = os.path.join(params["projectRoot"], "scripts", "run_pipeline.py")
+        if not os.path.isfile(scriptPath):
+            raise FileNotFoundError("run_pipeline.py was not found: " + scriptPath)
+
+        args = [
+            "-E",
+            scriptPath,
+            "single",
+            "--out-root", outputRoot,
+            "--work-root", workRoot,
+            "--project-root", os.path.abspath(params["projectRoot"]),
+            "--mni", assets["mniTemplate"],
+            "--seg-ckpt", assets["segCheckpoint"],
+            "--deform-ckpt", assets["deformCheckpoint"],
+            "--device", params["device"],
+            "--space", "MNI152",
+            "--transform-type", "Affine",
+            "--overwrite",
+            "--initsurf-workers", "1",
+            "--t1w", t1wPath,
+            "--subject", subject,
+            "--session", session,
+        ]
+
+        if params["exportNative"]:
+            args.append("--export-native")
+
+        finalSurfaceDir = os.path.join(outputRoot, subject, session, "surfaces")
+        commandString = " ".join([params["pythonExecutable"]] + args)
+
+        return {
+            "args": args,
+            "commandString": commandString,
+            "t1wPath": t1wPath,
+            "workRoot": workRoot,
+            "subject": subject,
+            "session": session,
+            "finalSurfaceDir": finalSurfaceDir,
+        }
+
+    def normalizeSubject(self, subject):
+        subject = str(subject).strip()
+        if not subject:
+            return "sub-001"
+        return subject if subject.startswith("sub-") else "sub-" + subject
+
+    def normalizeSession(self, session):
+        session = str(session).strip()
+        if not session:
+            return "ses-01"
+        return session if session.startswith("ses-") else "ses-" + session
 
     def validateBackendEnvironment(self, pythonExecutable, projectRoot, assetsRoot, device):
         validationCode = r'''
