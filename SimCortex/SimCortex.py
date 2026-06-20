@@ -94,9 +94,9 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         backendFormLayout.addRow("Backend mode: ", self.backendModeComboBox)
 
         self.dockerImageLineEdit = qt.QLineEdit()
-        self.dockerImageLineEdit.text = "simcortex:0.2.3"
+        self.dockerImageLineEdit.text = "kavehmoradkhani/simcortex:0.2.4"
         self.dockerImageLineEdit.setToolTip(
-            "Docker image used for Docker backend mode, for example simcortex:0.2.3."
+            "Docker image used for Docker backend mode, for example kavehmoradkhani/simcortex:0.2.4."
         )
         backendFormLayout.addRow("Docker image: ", self.dockerImageLineEdit)
 
