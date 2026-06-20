@@ -534,10 +534,17 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
 
         process = qt.QProcess()
         process.setProcessChannelMode(qt.QProcess.SeparateChannels)
-        process.setWorkingDirectory(params["projectRoot"])
-        process.setProcessEnvironment(
-            self.logic.createExternalProcessEnvironment(params["pythonExecutable"])
-        )
+
+        workingDirectory = runInfo.get("workingDirectory", "")
+        if workingDirectory:
+            process.setWorkingDirectory(workingDirectory)
+
+        if runInfo.get("backendMode") == "Docker":
+            process.setProcessEnvironment(qt.QProcessEnvironment.systemEnvironment())
+        else:
+            process.setProcessEnvironment(
+                self.logic.createExternalProcessEnvironment(params["pythonExecutable"])
+            )
 
         process.connect("readyReadStandardOutput()", self.onPipelineReadyReadStandardOutput)
         process.connect("readyReadStandardError()", self.onPipelineReadyReadStandardError)
@@ -546,7 +553,7 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.pipelineProcess = process
         self.setRunning(True)
 
-        process.start(params["pythonExecutable"], runInfo["args"])
+        process.start(runInfo["program"], runInfo["args"])
 
         if not process.waitForStarted(10000):
             self.setRunning(False)
@@ -771,7 +778,11 @@ class SimCortexLogic(ScriptedLoadableModuleLogic):
         return True, ""
 
     def validateParameters(self, params):
-        ok, message = self.validateBackendParameters(params)
+        if params.get("backendMode") == "Docker":
+            ok, message = self.validateDockerParameters(params)
+        else:
+            ok, message = self.validateBackendParameters(params)
+
         if not ok:
             return ok, message
 
@@ -860,6 +871,9 @@ class SimCortexLogic(ScriptedLoadableModuleLogic):
         return env
 
     def preparePipelineRun(self, params, assets):
+        if params.get("backendMode") == "Docker":
+            return self.prepareDockerPipelineRun(params, assets)
+
         subject = self.normalizeSubject(params["subject"])
         session = self.normalizeSession(params["session"])
 
@@ -906,7 +920,98 @@ class SimCortexLogic(ScriptedLoadableModuleLogic):
         commandString = " ".join([params["pythonExecutable"]] + args)
 
         return {
+            "backendMode": "Local Python",
+            "program": params["pythonExecutable"],
             "args": args,
+            "workingDirectory": params["projectRoot"],
+            "commandString": commandString,
+            "t1wPath": t1wPath,
+            "workRoot": workRoot,
+            "subject": subject,
+            "session": session,
+            "finalSurfaceDir": finalSurfaceDir,
+            "targetSpace": targetSpace,
+        }
+
+    def prepareDockerPipelineRun(self, params, assets):
+        subject = self.normalizeSubject(params["subject"])
+        session = self.normalizeSession(params["session"])
+
+        outputRoot = os.path.abspath(params["outputRoot"])
+        workRoot = os.path.join(outputRoot, "_work")
+        inputRoot = os.path.join(outputRoot, "_slicer_inputs")
+        inputDir = os.path.join(inputRoot, subject, session, "anat")
+        os.makedirs(inputDir, exist_ok=True)
+
+        t1wPath = os.path.join(inputDir, f"{subject}_{session}_T1w.nii.gz")
+
+        ok = slicer.util.saveNode(params["inputVolume"], t1wPath)
+        if not ok:
+            raise RuntimeError("Could not save selected input volume as NIfTI: " + t1wPath)
+
+        dockerImage = params["dockerImage"].strip()
+        assetsRoot = os.path.abspath(assets["assetsRoot"])
+
+        containerT1wPath = f"/input/{subject}/{session}/anat/{subject}_{session}_T1w.nii.gz"
+        containerOutputRoot = "/work"
+        containerWorkRoot = "/work/_work"
+        containerAssetsRoot = "/assets"
+
+        requestedDevice = params["device"]
+        containerDevice = requestedDevice
+
+        dockerArgs = ["run", "--rm"]
+
+        if requestedDevice.startswith("cuda"):
+            hostGpuIndex = requestedDevice.split(":")[1] if ":" in requestedDevice else "0"
+            dockerArgs.extend(["--gpus", "device=" + hostGpuIndex])
+            # Docker exposes the selected host GPU as cuda:0 inside the container.
+            containerDevice = "cuda:0"
+
+        dockerArgs.extend(["--shm-size", "8g"])
+
+        try:
+            dockerArgs.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
+        except Exception:
+            pass
+
+        dockerArgs.extend([
+            "-e", "HYDRA_FULL_ERROR=1",
+            "-w", "/work",
+            "-v", inputRoot + ":/input:ro",
+            "-v", outputRoot + ":/work",
+            "-v", assetsRoot + ":/assets:ro",
+            dockerImage,
+            "python", "/opt/SimCortex/scripts/run_pipeline.py", "single",
+            "--out-root", containerOutputRoot,
+            "--work-root", containerWorkRoot,
+            "--project-root", "/opt/SimCortex",
+            "--mni", os.path.join(containerAssetsRoot, "MNI152_T1_1mm.nii.gz"),
+            "--seg-ckpt", os.path.join(containerAssetsRoot, "seg", "seg_best_dice.pt"),
+            "--deform-ckpt", os.path.join(containerAssetsRoot, "deform", "deform_best_model.pth"),
+            "--device", containerDevice,
+            "--space", "MNI152",
+            "--transform-type", "Affine",
+            "--overwrite",
+            "--initsurf-workers", "1",
+            "--t1w", containerT1wPath,
+            "--subject", subject,
+            "--session", session,
+        ])
+
+        if params["exportNative"]:
+            dockerArgs.append("--export-native")
+
+        finalSurfaceDir = os.path.join(outputRoot, subject, session, "surfaces")
+        targetSpace = "native" if params["exportNative"] else "MNI152"
+
+        commandString = "docker " + " ".join(dockerArgs)
+
+        return {
+            "backendMode": "Docker",
+            "program": "docker",
+            "args": dockerArgs,
+            "workingDirectory": outputRoot,
             "commandString": commandString,
             "t1wPath": t1wPath,
             "workRoot": workRoot,
