@@ -180,6 +180,10 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.cancelButton.enabled = False
         runLayout.addWidget(self.cancelButton)
 
+        self.clearLogButton = qt.QPushButton("Clear log")
+        self.clearLogButton.toolTip = "Clear the SimCortex log display."
+        runLayout.addWidget(self.clearLogButton)
+
         self.logTextEdit = qt.QTextEdit()
         self.logTextEdit.readOnly = True
         self.logTextEdit.setMinimumHeight(190)
@@ -188,6 +192,7 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.validateBackendButton.connect("clicked(bool)", self.onValidateBackendButton)
         self.applyButton.connect("clicked(bool)", self.onApplyButton)
         self.cancelButton.connect("clicked(bool)", self.onCancelButton)
+        self.clearLogButton.connect("clicked(bool)", self.onClearLogButton)
         self.saveSettingsButton.connect("clicked(bool)", self.onSaveSettingsButton)
 
         self.layout.addStretch(1)
@@ -209,6 +214,9 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
 
         lineEdit = qt.QLineEdit()
         lineEdit.setPlaceholderText(placeholder)
+        lineEdit.setToolTip(placeholder)
+        lineEdit.setMinimumWidth(260)
+        lineEdit.connect("textChanged(QString)", lambda text, w=lineEdit: w.setToolTip(text))
         rowLayout.addWidget(lineEdit)
 
         browseButton = qt.QPushButton("Browse")
@@ -355,6 +363,9 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
     # -------------------------
     # Main actions
     # -------------------------
+    def onClearLogButton(self, checked=False):
+        self.logTextEdit.clear()
+
     def log(self, message):
         self.logTextEdit.append(message)
         slicer.app.processEvents()
