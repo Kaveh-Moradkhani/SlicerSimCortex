@@ -118,6 +118,12 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         )
         backendFormLayout.addRow("Export native surfaces: ", self.exportNativeCheckBox)
 
+        self.saveSettingsButton = qt.QPushButton("Save backend settings")
+        self.saveSettingsButton.setToolTip(
+            "Save backend paths and device selection so they are restored next time."
+        )
+        backendFormLayout.addRow("", self.saveSettingsButton)
+
         # -------------------------
         # Assets explanation
         # -------------------------
@@ -174,8 +180,11 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.validateBackendButton.connect("clicked(bool)", self.onValidateBackendButton)
         self.applyButton.connect("clicked(bool)", self.onApplyButton)
         self.cancelButton.connect("clicked(bool)", self.onCancelButton)
+        self.saveSettingsButton.connect("clicked(bool)", self.onSaveSettingsButton)
 
         self.layout.addStretch(1)
+
+        self.loadSettings()
 
         self.log("SimCortex module loaded.")
         self.log("Phase 2.6 UI is active.")
@@ -270,6 +279,56 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         )
 
     # -------------------------
+    # Persistent settings
+    # -------------------------
+    def settingsPrefix(self):
+        return "SimCortex/"
+
+    def onSaveSettingsButton(self, checked=False):
+        self.saveSettings()
+        self.log("Backend settings saved.")
+
+    def saveSettings(self):
+        settings = qt.QSettings()
+        prefix = self.settingsPrefix()
+
+        settings.setValue(prefix + "pythonExecutable", self.pythonExecutableLineEdit.text.strip())
+        settings.setValue(prefix + "projectRoot", self.projectRootLineEdit.text.strip())
+        settings.setValue(prefix + "assetsRoot", self.assetsRootLineEdit.text.strip())
+        settings.setValue(prefix + "outputRoot", self.outputRootLineEdit.text.strip())
+        settings.setValue(prefix + "device", self.deviceComboBox.currentText)
+        settings.setValue(prefix + "exportNative", "true" if self.exportNativeCheckBox.checked else "false")
+
+    def loadSettings(self):
+        settings = qt.QSettings()
+        prefix = self.settingsPrefix()
+
+        pythonExecutable = settings.value(prefix + "pythonExecutable", "")
+        projectRoot = settings.value(prefix + "projectRoot", "")
+        assetsRoot = settings.value(prefix + "assetsRoot", "")
+        outputRoot = settings.value(prefix + "outputRoot", "")
+        device = settings.value(prefix + "device", "")
+        exportNative = settings.value(prefix + "exportNative", "")
+
+        if pythonExecutable:
+            self.pythonExecutableLineEdit.text = str(pythonExecutable)
+        if projectRoot:
+            self.projectRootLineEdit.text = str(projectRoot)
+        if assetsRoot:
+            self.assetsRootLineEdit.text = str(assetsRoot)
+        if outputRoot:
+            self.outputRootLineEdit.text = str(outputRoot)
+
+        if device:
+            index = self.deviceComboBox.findText(str(device))
+            if index >= 0:
+                self.deviceComboBox.setCurrentIndex(index)
+
+        if exportNative != "":
+            self.exportNativeCheckBox.checked = str(exportNative).lower() in ["true", "1", "yes"]
+
+
+    # -------------------------
     # Parameter collection
     # -------------------------
     def collectParameters(self):
@@ -302,6 +361,7 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             return
 
         assets = self.logic.getAssetsPaths(params["assetsRoot"])
+        self.saveSettings()
 
         self.log("")
         self.log("Starting backend environment validation...")
@@ -355,6 +415,7 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             return
 
         assets = self.logic.getAssetsPaths(params["assetsRoot"])
+        self.saveSettings()
 
         try:
             runInfo = self.logic.preparePipelineRun(params, assets)
