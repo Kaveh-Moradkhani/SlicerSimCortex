@@ -198,6 +198,13 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.clearLogButton.toolTip = "Clear the SimCortex log display."
         runLayout.addWidget(self.clearLogButton)
 
+        self.progressBar = qt.QProgressBar()
+        self.progressBar.setRange(0, 100)
+        self.progressBar.setValue(0)
+        self.progressBar.setFormat("Idle")
+        self.progressBar.setToolTip("Approximate SimCortex pipeline progress based on stage log messages.")
+        runLayout.addWidget(self.progressBar)
+
         self.logTextEdit = qt.QTextEdit()
         self.logTextEdit.readOnly = True
         self.logTextEdit.setMinimumHeight(190)
@@ -415,6 +422,35 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.logTextEdit.ensureCursorVisible()
         slicer.app.processEvents()
 
+    def setProgress(self, value, label):
+        value = max(0, min(100, int(value)))
+        self.progressBar.setValue(value)
+        self.progressBar.setFormat(f"{value}% - {label}")
+        slicer.app.processEvents()
+
+    def updateProgressFromText(self, text):
+        if not text:
+            return
+
+        progressRules = [
+            ("[preproc] started", 10, "Preprocessing"),
+            ("[preproc] finished", 25, "Preprocessing complete"),
+            ("[segmentation] started", 30, "Segmentation"),
+            ("[segmentation] finished", 45, "Segmentation complete"),
+            ("[initsurf] started", 50, "Initial surface generation"),
+            ("[initsurf] finished", 70, "Initial surfaces complete"),
+            ("[deform] started", 75, "Surface deformation"),
+            ("[deform] finished", 90, "Surface deformation complete"),
+            ("[collect] Copied", 94, "Collecting surfaces"),
+            ("[export-native] Manifest written", 97, "Exporting native surfaces"),
+            ("[export-native] Exported", 98, "Native export complete"),
+            ("Pipeline finished successfully", 99, "Pipeline complete"),
+        ]
+
+        for token, value, label in progressRules:
+            if token in text:
+                self.setProgress(value, label)
+
     def onValidateBackendButton(self, checked=False):
         try:
             self._onValidateBackendButtonImpl(checked)
@@ -523,6 +559,7 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             return
 
         self.currentRunInfo = runInfo
+        self.setProgress(0, "Starting")
 
         self.log("")
         self.log("Starting SimCortex pipeline...")
@@ -566,6 +603,7 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             return
         text = self.qByteArrayToString(self.pipelineProcess.readAllStandardOutput())
         if text:
+            self.updateProgressFromText(text)
             self.log(text.rstrip())
 
     def onPipelineReadyReadStandardError(self):
@@ -573,6 +611,7 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             return
         text = self.qByteArrayToString(self.pipelineProcess.readAllStandardError())
         if text:
+            self.updateProgressFromText(text)
             self.log("STDERR: " + text.rstrip())
 
     def onPipelineFinished(self, exitCode, exitStatus):
@@ -587,12 +626,14 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.log("Exit code: " + str(exitCode))
 
         if exitCode == 0:
+            self.setProgress(99, "Pipeline complete")
             self.log("Pipeline completed successfully.")
             if runInfo:
                 self.log("Expected final surface directory:")
                 self.log(runInfo["finalSurfaceDir"])
                 self.loadGeneratedSurfaces(runInfo)
         else:
+            self.setProgress(0, "Failed")
             slicer.util.errorDisplay("SimCortex backend failed. See log box for details.")
             self.log("Pipeline failed.")
 
@@ -627,6 +668,7 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             self.log("  loaded: " + item["nodeName"])
 
         if loadedNodes:
+            self.setProgress(100, "Surfaces loaded")
             self.log("Loaded " + str(len(loadedNodes)) + " SimCortex surface model(s).")
             slicer.util.resetSliceViews()
             try:
