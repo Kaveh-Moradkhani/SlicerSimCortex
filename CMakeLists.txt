@@ -4,12 +4,12 @@ project(SlicerSimCortex)
 
 #-----------------------------------------------------------------------------
 # Extension meta-information
-set(EXTENSION_HOMEPAGE "https://www.slicer.org/wiki/Documentation/Nightly/Extensions/SlicerSimCortex")
-set(EXTENSION_CATEGORY "Examples")
-set(EXTENSION_CONTRIBUTORS "John Doe (AnyWare Corp.)")
-set(EXTENSION_DESCRIPTION "This is an example of a simple extension")
-set(EXTENSION_ICONURL "https://www.example.com/Slicer/Extensions/SlicerSimCortex.png")
-set(EXTENSION_SCREENSHOTURLS "https://www.example.com/Slicer/Extensions/SlicerSimCortex/Screenshots/1.png")
+set(EXTENSION_HOMEPAGE "https://github.com/Kaveh-Moradkhani/SlicerSimCortex")
+set(EXTENSION_CATEGORY "Surface Models")
+set(EXTENSION_CONTRIBUTORS "Kaveh Moradkhani, Sylvain Bouix")
+set(EXTENSION_DESCRIPTION "3D Slicer frontend for SimCortex cortical white and pial surface reconstruction from native T1w MRI using an external deep learning backend.")
+set(EXTENSION_ICONURL "https://raw.githubusercontent.com/Kaveh-Moradkhani/SlicerSimCortex/main/SlicerSimCortex.png")
+set(EXTENSION_SCREENSHOTURLS "")
 set(EXTENSION_DEPENDS "NA") # Specified as a list or "NA" if no dependencies
 
 #-----------------------------------------------------------------------------

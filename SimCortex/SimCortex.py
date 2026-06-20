@@ -13,7 +13,7 @@ class SimCortex(ScriptedLoadableModule):
         self.parent.title = "SimCortex"
         self.parent.categories = ["Surface Models"]
         self.parent.dependencies = []
-        self.parent.contributors = ["Shakila Moradi, Kaveh Lab"]
+        self.parent.contributors = ["Kaveh Moradkhani, Sylvain Bouix"]
         self.parent.helpText = """
 SimCortex performs cortical surface reconstruction from native T1w MRI.
 
@@ -148,24 +148,31 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
 
         runLayout = qt.QVBoxLayout(runCollapsibleButton)
 
+        self.validateBackendButton = qt.QPushButton("Validate backend environment")
+        self.validateBackendButton.toolTip = (
+            "Check the external SimCortex Python environment and required dependencies."
+        )
+        runLayout.addWidget(self.validateBackendButton)
+
         self.applyButton = qt.QPushButton("Apply")
-        self.applyButton.toolTip = "Validate settings. Backend execution will be added in Phase 3."
+        self.applyButton.toolTip = "Run SimCortex. Full backend execution will be added in Phase 3."
         self.applyButton.enabled = True
         runLayout.addWidget(self.applyButton)
 
         self.logTextEdit = qt.QTextEdit()
         self.logTextEdit.readOnly = True
-        self.logTextEdit.setMinimumHeight(180)
+        self.logTextEdit.setMinimumHeight(190)
         runLayout.addWidget(self.logTextEdit)
 
+        self.validateBackendButton.connect("clicked(bool)", self.onValidateBackendButton)
         self.applyButton.connect("clicked(bool)", self.onApplyButton)
 
         self.layout.addStretch(1)
 
         self.log("SimCortex module loaded.")
-        self.log("Phase 2.5 UI is active.")
-        self.log("Using one pretrained assets directory instead of separate fixed-file fields.")
-        self.log("Backend execution is not implemented yet.")
+        self.log("Phase 2.6 UI is active.")
+        self.log("Backend validation is available.")
+        self.log("Full pipeline execution is not implemented yet.")
 
     # -------------------------
     # UI helpers
@@ -214,6 +221,18 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         if selected:
             lineEdit.text = selected
 
+    def qByteArrayToString(self, byteArray):
+        try:
+            return bytes(byteArray).decode("utf-8", errors="replace")
+        except Exception:
+            try:
+                data = byteArray.data()
+                if isinstance(data, bytes):
+                    return data.decode("utf-8", errors="replace")
+                return str(data)
+            except Exception:
+                return str(byteArray)
+
     # -------------------------
     # Browse callbacks
     # -------------------------
@@ -243,14 +262,10 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         )
 
     # -------------------------
-    # Main actions
+    # Parameter collection
     # -------------------------
-    def log(self, message):
-        self.logTextEdit.append(message)
-        slicer.app.processEvents()
-
-    def onApplyButton(self, checked=False):
-        params = {
+    def collectParameters(self):
+        return {
             "inputVolume": self.inputVolumeSelector.currentNode(),
             "subject": self.subjectLineEdit.text.strip(),
             "session": self.sessionLineEdit.text.strip(),
@@ -261,6 +276,49 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             "device": self.deviceComboBox.currentText,
             "exportNative": self.exportNativeCheckBox.checked,
         }
+
+    # -------------------------
+    # Main actions
+    # -------------------------
+    def log(self, message):
+        self.logTextEdit.append(message)
+        slicer.app.processEvents()
+
+    def onValidateBackendButton(self, checked=False):
+        params = self.collectParameters()
+
+        ok, errorMessage = self.logic.validateBackendParameters(params)
+        if not ok:
+            slicer.util.errorDisplay(errorMessage)
+            self.log("Backend validation failed before launch: " + errorMessage)
+            return
+
+        assets = self.logic.getAssetsPaths(params["assetsRoot"])
+
+        self.log("")
+        self.log("Starting backend environment validation...")
+        self.log("Python: " + params["pythonExecutable"])
+        self.log("Project root: " + params["projectRoot"])
+        self.log("Assets root: " + assets["assetsRoot"])
+        self.log("Device: " + params["device"])
+
+        ok, output = self.logic.validateBackendEnvironment(
+            pythonExecutable=params["pythonExecutable"],
+            projectRoot=params["projectRoot"],
+            assetsRoot=assets["assetsRoot"],
+            device=params["device"],
+        )
+
+        self.log(output.strip())
+
+        if ok:
+            self.log("Backend environment validation PASSED.")
+        else:
+            slicer.util.errorDisplay("Backend environment validation failed. See log box for details.")
+            self.log("Backend environment validation FAILED.")
+
+    def onApplyButton(self, checked=False):
+        params = self.collectParameters()
 
         ok, errorMessage = self.logic.validateParameters(params)
         if not ok:
@@ -275,7 +333,7 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.log("Resolved MNI template: " + assets["mniTemplate"])
         self.log("Resolved segmentation checkpoint: " + assets["segCheckpoint"])
         self.log("Resolved deform checkpoint: " + assets["deformCheckpoint"])
-        self.log("Backend execution will be implemented in Phase 3.")
+        self.log("Full backend execution will be implemented in Phase 3.")
 
 
 class SimCortexLogic(ScriptedLoadableModuleLogic):
@@ -321,21 +379,11 @@ class SimCortexLogic(ScriptedLoadableModuleLogic):
             "deformCheckpoint": os.path.join(selectedAssetsRoot, "deform", "deform_best_model.pth"),
         }
 
-    def validateParameters(self, params):
-        if params["inputVolume"] is None:
-            return False, "Please select an input T1w volume."
-
-        if not params["subject"]:
-            return False, "Please enter a subject ID, for example sub-001."
-
-        if not params["session"]:
-            return False, "Please enter a session ID, for example ses-01."
-
+    def validateBackendParameters(self, params):
         requiredPaths = [
             ("SimCortex Python executable", params["pythonExecutable"]),
             ("SimCortex project root", params["projectRoot"]),
             ("Pretrained assets directory", params["assetsRoot"]),
-            ("Output root", params["outputRoot"]),
         ]
 
         for label, path in requiredPaths:
@@ -350,9 +398,6 @@ class SimCortexLogic(ScriptedLoadableModuleLogic):
 
         if not os.path.isdir(params["assetsRoot"]):
             return False, "Pretrained assets directory does not exist."
-
-        if not os.path.isdir(params["outputRoot"]):
-            return False, "Output root folder does not exist."
 
         assets = self.getAssetsPaths(params["assetsRoot"])
 
@@ -377,6 +422,161 @@ class SimCortexLogic(ScriptedLoadableModuleLogic):
             )
 
         return True, ""
+
+    def validateParameters(self, params):
+        ok, message = self.validateBackendParameters(params)
+        if not ok:
+            return ok, message
+
+        if params["inputVolume"] is None:
+            return False, "Please select an input T1w volume."
+
+        if not params["subject"]:
+            return False, "Please enter a subject ID, for example sub-001."
+
+        if not params["session"]:
+            return False, "Please enter a session ID, for example ses-01."
+
+        if not params["outputRoot"]:
+            return False, "Please set: Output root"
+
+        if not os.path.isdir(params["outputRoot"]):
+            return False, "Output root folder does not exist."
+
+        return True, ""
+
+    def validateBackendEnvironment(self, pythonExecutable, projectRoot, assetsRoot, device):
+        validationCode = r'''
+import importlib
+import os
+import sys
+import traceback
+
+project_root = sys.argv[1]
+assets_root = sys.argv[2]
+device = sys.argv[3]
+
+src_root = os.path.join(project_root, "src")
+if os.path.isdir(src_root):
+    sys.path.insert(0, src_root)
+sys.path.insert(0, project_root)
+
+print("Python executable:", sys.executable)
+print("Python version:", sys.version.replace("\n", " "))
+print("Project root:", project_root)
+print("Assets root:", assets_root)
+print("Requested device:", device)
+print("")
+
+required_assets = [
+    os.path.join(assets_root, "MNI152_T1_1mm.nii.gz"),
+    os.path.join(assets_root, "seg", "seg_best_dice.pt"),
+    os.path.join(assets_root, "deform", "deform_best_model.pth"),
+]
+
+for path in required_assets:
+    print("Checking asset:", path)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
+
+print("")
+print("Import checks:")
+
+checks = [
+    ("simcortex", "simcortex"),
+    ("torch", "torch"),
+    ("monai", "monai"),
+    ("pytorch3d", "pytorch3d"),
+    ("ants", "ants"),
+    ("trimesh", "trimesh"),
+    ("hydra", "hydra"),
+]
+
+for label, module_name in checks:
+    module = importlib.import_module(module_name)
+    version = getattr(module, "__version__", "unknown")
+    print(f"  {label}: OK, version={version}")
+
+print("")
+import torch
+print("Torch CUDA available:", torch.cuda.is_available())
+print("Torch CUDA device count:", torch.cuda.device_count())
+
+if device.startswith("cuda"):
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA device was requested, but torch.cuda.is_available() is False.")
+
+    try:
+        device_index = int(device.split(":")[1])
+    except Exception:
+        raise RuntimeError("CUDA device must look like cuda:0 or cuda:1.")
+
+    if device_index >= torch.cuda.device_count():
+        raise RuntimeError(
+            f"Requested {device}, but only {torch.cuda.device_count()} CUDA device(s) are visible."
+        )
+
+    print("Selected CUDA device name:", torch.cuda.get_device_name(device_index))
+
+print("")
+print("Backend validation completed successfully.")
+'''
+
+        process = qt.QProcess()
+        process.setProcessChannelMode(qt.QProcess.SeparateChannels)
+
+        # Use Slicer's original startup environment, not the modified runtime
+        # environment. This avoids leaking Slicer's Python 3.9 paths into the
+        # external SimCortex Python/conda environment.
+        startupEnv = slicer.util.startupEnvironment()
+
+        env = qt.QProcessEnvironment()
+
+        for key, value in startupEnv.items():
+            env.insert(key, value)
+
+        # Explicitly remove Python variables that can contaminate the external
+        # interpreter. We will set a clean PYTHONPATH below.
+        for key in ["PYTHONHOME", "PYTHONPATH"]:
+            if env.contains(key):
+                env.remove(key)
+
+        srcRoot = os.path.join(projectRoot, "src")
+        env.insert("PYTHONPATH", os.pathsep.join([srcRoot, projectRoot]))
+
+        process.setProcessEnvironment(env)
+
+        args = ["-E", "-c", validationCode, projectRoot, assetsRoot, device]
+        process.start(pythonExecutable, args)
+
+        finished = process.waitForFinished(120000)
+
+        stdoutText = self._qByteArrayToString(process.readAllStandardOutput())
+        stderrText = self._qByteArrayToString(process.readAllStandardError())
+
+        if not finished:
+            process.kill()
+            return False, "Backend validation timed out after 120 seconds.\n\n" + stdoutText + "\n" + stderrText
+
+        exitCode = process.exitCode()
+
+        combinedOutput = stdoutText
+        if stderrText.strip():
+            combinedOutput += "\nSTDERR:\n" + stderrText
+
+        return exitCode == 0, combinedOutput
+
+    def _qByteArrayToString(self, byteArray):
+        try:
+            return bytes(byteArray).decode("utf-8", errors="replace")
+        except Exception:
+            try:
+                data = byteArray.data()
+                if isinstance(data, bytes):
+                    return data.decode("utf-8", errors="replace")
+                return str(data)
+            except Exception:
+                return str(byteArray)
 
 
 class SimCortexTest(ScriptedLoadableModuleTest):
