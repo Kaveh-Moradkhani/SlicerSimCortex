@@ -425,10 +425,103 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             if runInfo:
                 self.log("Expected final surface directory:")
                 self.log(runInfo["finalSurfaceDir"])
-                self.log("Surface loading will be implemented in Phase 4.")
+                self.loadGeneratedSurfaces(runInfo)
         else:
             slicer.util.errorDisplay("SimCortex backend failed. See log box for details.")
             self.log("Pipeline failed.")
+
+
+    def loadGeneratedSurfaces(self, runInfo):
+        surfaceFiles = self.logic.getExpectedSurfaceFiles(runInfo)
+
+        missing = [item["path"] for item in surfaceFiles if not os.path.isfile(item["path"])]
+        if missing:
+            self.log("Surface loading skipped because some expected files are missing:")
+            for path in missing:
+                self.log("  missing: " + path)
+            slicer.util.errorDisplay("Some expected SimCortex output surfaces were not found. See log box.")
+            return
+
+        self.log("Loading generated surfaces into Slicer...")
+
+        loadedNodes = []
+        for item in surfaceFiles:
+            # SimCortex exported surfaces are in RAS-mm coordinates.
+            # Use vtkMRMLModelStorageNode directly so the coordinate system
+            # is explicitly set, equivalent to ticking RAS in the manual loader.
+            self.log("  loading RAS: " + os.path.basename(item["path"]))
+            success, modelNode = self.loadModelAsRAS(item["path"], item["nodeName"])
+
+            if not success or modelNode is None:
+                self.log("  FAILED: " + item["path"])
+                continue
+
+            self.applySurfaceDisplay(modelNode, item)
+            loadedNodes.append(modelNode)
+            self.log("  loaded: " + item["nodeName"])
+
+        if loadedNodes:
+            self.log("Loaded " + str(len(loadedNodes)) + " SimCortex surface model(s).")
+            slicer.util.resetSliceViews()
+            try:
+                slicer.app.layoutManager().threeDWidget(0).threeDView().resetFocalPoint()
+            except Exception:
+                pass
+        else:
+            slicer.util.errorDisplay("No SimCortex surfaces could be loaded.")
+            self.log("No surfaces were loaded.")
+
+    def loadModelAsRAS(self, filePath, nodeName):
+        modelNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode", nodeName)
+        storageNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelStorageNode")
+        storageNode.SetFileName(filePath)
+
+        # Slicer stores model coordinates either as RAS or LPS.
+        # SimCortex native exports are RAS-mm according to export_manifest.tsv.
+        try:
+            storageNode.SetCoordinateSystem(slicer.vtkMRMLStorageNode.CoordinateSystemRAS)
+        except Exception:
+            try:
+                storageNode.SetCoordinateSystemToRAS()
+            except Exception:
+                pass
+
+        success = storageNode.ReadData(modelNode)
+
+        if not success:
+            slicer.mrmlScene.RemoveNode(modelNode)
+            slicer.mrmlScene.RemoveNode(storageNode)
+            return False, None
+
+        modelNode.SetAndObserveStorageNodeID(storageNode.GetID())
+        modelNode.CreateDefaultDisplayNodes()
+        return True, modelNode
+
+    def applySurfaceDisplay(self, modelNode, item):
+        displayNode = modelNode.GetDisplayNode()
+        if displayNode is None:
+            modelNode.CreateDefaultDisplayNodes()
+            displayNode = modelNode.GetDisplayNode()
+
+        if displayNode is None:
+            return
+
+        # Basic surface colors:
+        # white matter = light gray, pial = warm orange/red.
+        if item["surface"] == "white":
+            # light blue
+            color = (0.55, 0.75, 0.95)
+            opacity = 1.0
+        else:
+            # light red
+            color = (0.95, 0.55, 0.55)
+            opacity = 0.45
+
+        displayNode.SetColor(color)
+        displayNode.SetOpacity(opacity)
+        displayNode.SetVisibility(True)
+        displayNode.SetSliceIntersectionVisibility(True)
+        displayNode.SetBackfaceCulling(False)
 
 
 class SimCortexLogic(ScriptedLoadableModuleLogic):
@@ -540,6 +633,39 @@ class SimCortexLogic(ScriptedLoadableModuleLogic):
 
         return True, ""
 
+    def getExpectedSurfaceFiles(self, runInfo):
+        subject = runInfo["subject"]
+        session = runInfo["session"]
+        surfaceDir = runInfo["finalSurfaceDir"]
+        targetSpace = runInfo.get("targetSpace", "native")
+
+        specs = [
+            ("L", "white", "lh_white"),
+            ("L", "pial", "lh_pial"),
+            ("R", "white", "rh_white"),
+            ("R", "pial", "rh_pial"),
+        ]
+
+        surfaceFiles = []
+        for hemi, surface, shortName in specs:
+            filename = (
+                f"{subject}_{session}_space-{targetSpace}_desc-deform_"
+                f"hemi-{hemi}_{surface}.surf.ply"
+            )
+            path = os.path.join(surfaceDir, filename)
+            nodeName = f"SimCortex_{subject}_{session}_{shortName}_{targetSpace}"
+
+            surfaceFiles.append({
+                "path": path,
+                "hemi": hemi,
+                "surface": surface,
+                "shortName": shortName,
+                "nodeName": nodeName,
+            })
+
+        return surfaceFiles
+
+
     def createExternalProcessEnvironment(self, pythonExecutable):
         """
         Create a clean environment for running external SimCortex Python.
@@ -617,6 +743,7 @@ class SimCortexLogic(ScriptedLoadableModuleLogic):
             args.append("--export-native")
 
         finalSurfaceDir = os.path.join(outputRoot, subject, session, "surfaces")
+        targetSpace = "native" if params["exportNative"] else "MNI152"
         commandString = " ".join([params["pythonExecutable"]] + args)
 
         return {
@@ -627,6 +754,7 @@ class SimCortexLogic(ScriptedLoadableModuleLogic):
             "subject": subject,
             "session": session,
             "finalSurfaceDir": finalSurfaceDir,
+            "targetSpace": targetSpace,
         }
 
     def normalizeSubject(self, subject):
