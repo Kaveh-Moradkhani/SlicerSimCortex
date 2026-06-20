@@ -69,6 +69,14 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.sessionLineEdit.setToolTip("Session ID used by SimCortex, for example ses-01.")
         inputFormLayout.addRow("Session ID: ", self.sessionLineEdit)
 
+        self.nativeInputWarningLabel = qt.QLabel()
+        self.nativeInputWarningLabel.setWordWrap(True)
+        self.nativeInputWarningLabel.text = (
+            "Important: select the original native T1w MRI as input. "
+            "Do not select a SimCortex preprocessed MNI-space T1w volume."
+        )
+        inputFormLayout.addRow("", self.nativeInputWarningLabel)
+
         # -------------------------
         # Backend settings section
         # -------------------------
@@ -163,7 +171,7 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         runLayout.addWidget(self.validateBackendButton)
 
         self.applyButton = qt.QPushButton("Apply")
-        self.applyButton.toolTip = "Run SimCortex using the external backend environment."
+        self.applyButton.toolTip = "Run SimCortex on the selected native T1w MRI using the external backend environment."
         self.applyButton.enabled = True
         runLayout.addWidget(self.applyButton)
 
@@ -187,8 +195,8 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.loadSettings()
 
         self.log("SimCortex module loaded.")
-        self.log("Phase 2.6 UI is active.")
-        self.log("Backend validation is available.")
+        self.log("SimCortex extension is ready.")
+        self.log("Backend validation, pipeline execution, and RAS surface loading are available.")
         self.log("Full pipeline execution is available via Apply.")
 
     # -------------------------
