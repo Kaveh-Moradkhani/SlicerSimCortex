@@ -19,6 +19,9 @@ SimCortex performs cortical surface reconstruction from native T1w MRI.
 
 This Slicer module is a frontend. The deep learning backend runs in an
 external SimCortex Python environment, not inside Slicer's bundled Python.
+
+Pretrained assets should be downloaded separately, for example from the
+official SimCortex Zenodo record, then selected as one assets directory.
 """
         self.parent.acknowledgementText = """
 This module uses SimCortex for cortical white and pial surface reconstruction.
@@ -33,6 +36,9 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
 
         self.logic = SimCortexLogic()
 
+        # -------------------------
+        # Input section
+        # -------------------------
         inputCollapsibleButton = ctk.ctkCollapsibleButton()
         inputCollapsibleButton.text = "Input"
         self.layout.addWidget(inputCollapsibleButton)
@@ -53,12 +59,17 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
 
         self.subjectLineEdit = qt.QLineEdit()
         self.subjectLineEdit.text = "sub-001"
+        self.subjectLineEdit.setToolTip("Subject ID used by SimCortex, for example sub-001.")
         inputFormLayout.addRow("Subject ID: ", self.subjectLineEdit)
 
         self.sessionLineEdit = qt.QLineEdit()
         self.sessionLineEdit.text = "ses-01"
+        self.sessionLineEdit.setToolTip("Session ID used by SimCortex, for example ses-01.")
         inputFormLayout.addRow("Session ID: ", self.sessionLineEdit)
 
+        # -------------------------
+        # Backend settings section
+        # -------------------------
         backendCollapsibleButton = ctk.ctkCollapsibleButton()
         backendCollapsibleButton.text = "Backend settings"
         self.layout.addWidget(backendCollapsibleButton)
@@ -79,25 +90,11 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             self.onBrowseProjectRoot,
         )
 
-        self.mniTemplateLineEdit = self.createPathSelector(
+        self.assetsRootLineEdit = self.createPathSelector(
             backendFormLayout,
-            "MNI template: ",
-            "/path/to/MNI152_T1_1mm.nii.gz",
-            self.onBrowseMniTemplate,
-        )
-
-        self.segCheckpointLineEdit = self.createPathSelector(
-            backendFormLayout,
-            "Seg checkpoint: ",
-            "/path/to/seg_best_dice.pt",
-            self.onBrowseSegCheckpoint,
-        )
-
-        self.deformCheckpointLineEdit = self.createPathSelector(
-            backendFormLayout,
-            "Deform checkpoint: ",
-            "/path/to/deform_best_model.pth",
-            self.onBrowseDeformCheckpoint,
+            "Pretrained assets directory: ",
+            "/path/to/SimCortexV2_pretrained_weights",
+            self.onBrowseAssetsRoot,
         )
 
         self.outputRootLineEdit = self.createPathSelector(
@@ -109,6 +106,7 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
 
         self.deviceComboBox = qt.QComboBox()
         self.deviceComboBox.addItems(["cuda:0", "cuda:1", "cpu"])
+        self.deviceComboBox.setToolTip("Device used by the external SimCortex backend.")
         backendFormLayout.addRow("Device: ", self.deviceComboBox)
 
         self.exportNativeCheckBox = qt.QCheckBox()
@@ -118,6 +116,32 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         )
         backendFormLayout.addRow("Export native surfaces: ", self.exportNativeCheckBox)
 
+        # -------------------------
+        # Assets explanation
+        # -------------------------
+        assetsInfoCollapsibleButton = ctk.ctkCollapsibleButton()
+        assetsInfoCollapsibleButton.text = "Expected pretrained assets"
+        assetsInfoCollapsibleButton.collapsed = True
+        self.layout.addWidget(assetsInfoCollapsibleButton)
+
+        assetsInfoLayout = qt.QVBoxLayout(assetsInfoCollapsibleButton)
+
+        self.assetsInfoLabel = qt.QLabel()
+        self.assetsInfoLabel.setWordWrap(True)
+        self.assetsInfoLabel.text = (
+            "Select the folder that contains the fixed SimCortex pretrained assets. "
+            "Expected files:\n\n"
+            "MNI152_T1_1mm.nii.gz\n"
+            "seg/seg_best_dice.pt\n"
+            "deform/deform_best_model.pth\n\n"
+            "If you select the outer unzipped Zenodo folder, the module will also check "
+            "for a child folder named SimCortexV2_pretrained_weights."
+        )
+        assetsInfoLayout.addWidget(self.assetsInfoLabel)
+
+        # -------------------------
+        # Run section
+        # -------------------------
         runCollapsibleButton = ctk.ctkCollapsibleButton()
         runCollapsibleButton.text = "Run"
         self.layout.addWidget(runCollapsibleButton)
@@ -139,9 +163,13 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.layout.addStretch(1)
 
         self.log("SimCortex module loaded.")
-        self.log("Phase 2.4 UI is active. Browse buttons are available.")
+        self.log("Phase 2.5 UI is active.")
+        self.log("Using one pretrained assets directory instead of separate fixed-file fields.")
         self.log("Backend execution is not implemented yet.")
 
+    # -------------------------
+    # UI helpers
+    # -------------------------
     def createPathSelector(self, formLayout, label, placeholder, browseCallback):
         rowWidget = qt.QWidget()
         rowLayout = qt.QHBoxLayout(rowWidget)
@@ -186,6 +214,9 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         if selected:
             lineEdit.text = selected
 
+    # -------------------------
+    # Browse callbacks
+    # -------------------------
     def onBrowsePythonExecutable(self, checked=False):
         self.browseFile(
             "Select SimCortex Python executable",
@@ -199,25 +230,10 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             self.projectRootLineEdit,
         )
 
-    def onBrowseMniTemplate(self, checked=False):
-        self.browseFile(
-            "Select MNI template",
-            self.mniTemplateLineEdit,
-            "NIfTI files (*.nii *.nii.gz);;All files (*)",
-        )
-
-    def onBrowseSegCheckpoint(self, checked=False):
-        self.browseFile(
-            "Select segmentation checkpoint",
-            self.segCheckpointLineEdit,
-            "PyTorch checkpoint (*.pt *.pth);;All files (*)",
-        )
-
-    def onBrowseDeformCheckpoint(self, checked=False):
-        self.browseFile(
-            "Select deform checkpoint",
-            self.deformCheckpointLineEdit,
-            "PyTorch checkpoint (*.pt *.pth);;All files (*)",
+    def onBrowseAssetsRoot(self, checked=False):
+        self.browseDirectory(
+            "Select pretrained assets directory",
+            self.assetsRootLineEdit,
         )
 
     def onBrowseOutputRoot(self, checked=False):
@@ -226,6 +242,9 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             self.outputRootLineEdit,
         )
 
+    # -------------------------
+    # Main actions
+    # -------------------------
     def log(self, message):
         self.logTextEdit.append(message)
         slicer.app.processEvents()
@@ -237,9 +256,7 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             "session": self.sessionLineEdit.text.strip(),
             "pythonExecutable": self.pythonExecutableLineEdit.text.strip(),
             "projectRoot": self.projectRootLineEdit.text.strip(),
-            "mniTemplate": self.mniTemplateLineEdit.text.strip(),
-            "segCheckpoint": self.segCheckpointLineEdit.text.strip(),
-            "deformCheckpoint": self.deformCheckpointLineEdit.text.strip(),
+            "assetsRoot": self.assetsRootLineEdit.text.strip(),
             "outputRoot": self.outputRootLineEdit.text.strip(),
             "device": self.deviceComboBox.currentText,
             "exportNative": self.exportNativeCheckBox.checked,
@@ -251,12 +268,58 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             self.log("Validation failed: " + errorMessage)
             return
 
+        assets = self.logic.getAssetsPaths(params["assetsRoot"])
+
         self.log("Validation passed.")
+        self.log("Resolved assets directory: " + assets["assetsRoot"])
+        self.log("Resolved MNI template: " + assets["mniTemplate"])
+        self.log("Resolved segmentation checkpoint: " + assets["segCheckpoint"])
+        self.log("Resolved deform checkpoint: " + assets["deformCheckpoint"])
         self.log("Backend execution will be implemented in Phase 3.")
 
 
 class SimCortexLogic(ScriptedLoadableModuleLogic):
     """Logic for SimCortex module."""
+
+    def getAssetsPaths(self, selectedAssetsRoot):
+        """
+        Resolve the SimCortex pretrained assets folder.
+
+        Supports either:
+        1. Direct selection of SimCortexV2_pretrained_weights/
+        2. Selection of the outer unzipped Zenodo folder that contains
+           SimCortexV2_pretrained_weights/
+        """
+        selectedAssetsRoot = os.path.abspath(selectedAssetsRoot)
+
+        candidateRoots = [
+            selectedAssetsRoot,
+            os.path.join(selectedAssetsRoot, "SimCortexV2_pretrained_weights"),
+        ]
+
+        for root in candidateRoots:
+            mniTemplate = os.path.join(root, "MNI152_T1_1mm.nii.gz")
+            segCheckpoint = os.path.join(root, "seg", "seg_best_dice.pt")
+            deformCheckpoint = os.path.join(root, "deform", "deform_best_model.pth")
+
+            if (
+                os.path.isfile(mniTemplate)
+                and os.path.isfile(segCheckpoint)
+                and os.path.isfile(deformCheckpoint)
+            ):
+                return {
+                    "assetsRoot": root,
+                    "mniTemplate": mniTemplate,
+                    "segCheckpoint": segCheckpoint,
+                    "deformCheckpoint": deformCheckpoint,
+                }
+
+        return {
+            "assetsRoot": selectedAssetsRoot,
+            "mniTemplate": os.path.join(selectedAssetsRoot, "MNI152_T1_1mm.nii.gz"),
+            "segCheckpoint": os.path.join(selectedAssetsRoot, "seg", "seg_best_dice.pt"),
+            "deformCheckpoint": os.path.join(selectedAssetsRoot, "deform", "deform_best_model.pth"),
+        }
 
     def validateParameters(self, params):
         if params["inputVolume"] is None:
@@ -271,15 +334,13 @@ class SimCortexLogic(ScriptedLoadableModuleLogic):
         requiredPaths = [
             ("SimCortex Python executable", params["pythonExecutable"]),
             ("SimCortex project root", params["projectRoot"]),
-            ("MNI template", params["mniTemplate"]),
-            ("Segmentation checkpoint", params["segCheckpoint"]),
-            ("Deform checkpoint", params["deformCheckpoint"]),
+            ("Pretrained assets directory", params["assetsRoot"]),
             ("Output root", params["outputRoot"]),
         ]
 
         for label, path in requiredPaths:
             if not path:
-                return False, f"Please set: {label}"
+                return False, "Please set: " + label
 
         if not os.path.isfile(params["pythonExecutable"]):
             return False, "SimCortex Python executable does not exist."
@@ -287,17 +348,33 @@ class SimCortexLogic(ScriptedLoadableModuleLogic):
         if not os.path.isdir(params["projectRoot"]):
             return False, "SimCortex project root does not exist."
 
-        if not os.path.isfile(params["mniTemplate"]):
-            return False, "MNI template file does not exist."
-
-        if not os.path.isfile(params["segCheckpoint"]):
-            return False, "Segmentation checkpoint file does not exist."
-
-        if not os.path.isfile(params["deformCheckpoint"]):
-            return False, "Deform checkpoint file does not exist."
+        if not os.path.isdir(params["assetsRoot"]):
+            return False, "Pretrained assets directory does not exist."
 
         if not os.path.isdir(params["outputRoot"]):
             return False, "Output root folder does not exist."
+
+        assets = self.getAssetsPaths(params["assetsRoot"])
+
+        if not os.path.isfile(assets["mniTemplate"]):
+            return False, (
+                "MNI template was not found. Expected:\n"
+                + assets["mniTemplate"]
+                + "\n\nPlease select the folder containing MNI152_T1_1mm.nii.gz, "
+                + "or the outer Zenodo folder containing SimCortexV2_pretrained_weights."
+            )
+
+        if not os.path.isfile(assets["segCheckpoint"]):
+            return False, (
+                "Segmentation checkpoint was not found. Expected:\n"
+                + assets["segCheckpoint"]
+            )
+
+        if not os.path.isfile(assets["deformCheckpoint"]):
+            return False, (
+                "Deform checkpoint was not found. Expected:\n"
+                + assets["deformCheckpoint"]
+            )
 
         return True, ""
 
