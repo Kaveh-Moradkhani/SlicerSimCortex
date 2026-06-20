@@ -86,6 +86,20 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
 
         backendFormLayout = qt.QFormLayout(backendCollapsibleButton)
 
+        self.backendModeComboBox = qt.QComboBox()
+        self.backendModeComboBox.addItems(["Local Python", "Docker"])
+        self.backendModeComboBox.setToolTip(
+            "Choose how SimCortex is executed. Docker mode runs SimCortex inside a Docker image."
+        )
+        backendFormLayout.addRow("Backend mode: ", self.backendModeComboBox)
+
+        self.dockerImageLineEdit = qt.QLineEdit()
+        self.dockerImageLineEdit.text = "simcortex:0.2.3"
+        self.dockerImageLineEdit.setToolTip(
+            "Docker image used for Docker backend mode, for example simcortex:0.2.3."
+        )
+        backendFormLayout.addRow("Docker image: ", self.dockerImageLineEdit)
+
         self.pythonExecutableLineEdit = self.createPathSelector(
             backendFormLayout,
             "SimCortex Python: ",
@@ -194,15 +208,32 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.cancelButton.connect("clicked(bool)", self.onCancelButton)
         self.clearLogButton.connect("clicked(bool)", self.onClearLogButton)
         self.saveSettingsButton.connect("clicked(bool)", self.onSaveSettingsButton)
+        self.backendModeComboBox.connect("currentIndexChanged(int)", self.onBackendModeChanged)
 
         self.layout.addStretch(1)
 
         self.loadSettings()
+        self.updateBackendModeUi()
 
         self.log("SimCortex module loaded.")
         self.log("SimCortex extension is ready.")
         self.log("Backend validation, pipeline execution, and RAS surface loading are available.")
         self.log("Full pipeline execution is available via Apply.")
+
+    def onBackendModeChanged(self, index):
+        self.updateBackendModeUi()
+
+    def updateBackendModeUi(self):
+        isDocker = self.backendModeComboBox.currentText == "Docker"
+
+        self.dockerImageLineEdit.enabled = isDocker
+
+        self.pythonExecutableLineEdit.enabled = not isDocker
+        self.projectRootLineEdit.enabled = not isDocker
+
+        modeText = "Docker" if isDocker else "Local Python"
+        self.validateBackendButton.text = "Validate " + modeText + " backend"
+        self.applyButton.toolTip = "Run SimCortex using the " + modeText + " backend."
 
     # -------------------------
     # UI helpers
@@ -308,6 +339,8 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         settings = qt.QSettings()
         prefix = self.settingsPrefix()
 
+        settings.setValue(prefix + "backendMode", self.backendModeComboBox.currentText)
+        settings.setValue(prefix + "dockerImage", self.dockerImageLineEdit.text.strip())
         settings.setValue(prefix + "pythonExecutable", self.pythonExecutableLineEdit.text.strip())
         settings.setValue(prefix + "projectRoot", self.projectRootLineEdit.text.strip())
         settings.setValue(prefix + "assetsRoot", self.assetsRootLineEdit.text.strip())
@@ -319,12 +352,21 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         settings = qt.QSettings()
         prefix = self.settingsPrefix()
 
+        backendMode = settings.value(prefix + "backendMode", "")
+        dockerImage = settings.value(prefix + "dockerImage", "")
         pythonExecutable = settings.value(prefix + "pythonExecutable", "")
         projectRoot = settings.value(prefix + "projectRoot", "")
         assetsRoot = settings.value(prefix + "assetsRoot", "")
         outputRoot = settings.value(prefix + "outputRoot", "")
         device = settings.value(prefix + "device", "")
         exportNative = settings.value(prefix + "exportNative", "")
+
+        if backendMode:
+            index = self.backendModeComboBox.findText(str(backendMode))
+            if index >= 0:
+                self.backendModeComboBox.setCurrentIndex(index)
+        if dockerImage:
+            self.dockerImageLineEdit.text = str(dockerImage)
 
         if pythonExecutable:
             self.pythonExecutableLineEdit.text = str(pythonExecutable)
@@ -352,6 +394,8 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             "inputVolume": self.inputVolumeSelector.currentNode(),
             "subject": self.subjectLineEdit.text.strip(),
             "session": self.sessionLineEdit.text.strip(),
+            "backendMode": self.backendModeComboBox.currentText,
+            "dockerImage": self.dockerImageLineEdit.text.strip(),
             "pythonExecutable": self.pythonExecutableLineEdit.text.strip(),
             "projectRoot": self.projectRootLineEdit.text.strip(),
             "assetsRoot": self.assetsRootLineEdit.text.strip(),
@@ -367,23 +411,58 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.logTextEdit.clear()
 
     def log(self, message):
-        self.logTextEdit.append(message)
+        self.logTextEdit.append(str(message))
+        self.logTextEdit.ensureCursorVisible()
         slicer.app.processEvents()
 
     def onValidateBackendButton(self, checked=False):
+        try:
+            self._onValidateBackendButtonImpl(checked)
+        except Exception as exc:
+            import traceback
+            self.log("Validation crashed with an internal error:")
+            self.log(traceback.format_exc())
+
+    def _onValidateBackendButtonImpl(self, checked=False):
         params = self.collectParameters()
+
+        if params["backendMode"] == "Docker":
+            ok, errorMessage = self.logic.validateDockerParameters(params)
+            if not ok:
+                self.log("Docker backend validation failed:")
+                self.log(errorMessage)
+                return
+
+            assets = self.logic.getAssetsPaths(params["assetsRoot"])
+
+            self.log("Validating Docker backend...")
+            self.log("Docker image: " + params["dockerImage"])
+            self.log("Assets root: " + assets["assetsRoot"])
+            self.log("Device: " + params["device"])
+
+            ok, output = self.logic.validateDockerEnvironment(
+                dockerImage=params["dockerImage"],
+                device=params["device"],
+            )
+
+            self.log(output.strip())
+
+            if ok:
+                self.log("Docker backend validation succeeded.")
+                self.saveSettings()
+            else:
+                self.log("Docker backend validation failed.")
+            return
 
         ok, errorMessage = self.logic.validateBackendParameters(params)
         if not ok:
-            slicer.util.errorDisplay(errorMessage)
-            self.log("Backend validation failed before launch: " + errorMessage)
+            self.log("Backend validation failed:")
+            self.log(errorMessage)
             return
 
         assets = self.logic.getAssetsPaths(params["assetsRoot"])
-        self.saveSettings()
 
-        self.log("")
-        self.log("Starting backend environment validation...")
+        self.log("Validating local Python backend environment...")
         self.log("Python: " + params["pythonExecutable"])
         self.log("Project root: " + params["projectRoot"])
         self.log("Assets root: " + assets["assetsRoot"])
@@ -399,10 +478,10 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.log(output.strip())
 
         if ok:
-            self.log("Backend environment validation PASSED.")
+            self.log("Local Python backend validation succeeded.")
+            self.saveSettings()
         else:
-            slicer.util.errorDisplay("Backend environment validation failed. See log box for details.")
-            self.log("Backend environment validation FAILED.")
+            self.log("Local Python backend validation failed.")
 
     def setRunning(self, running):
         self.applyButton.enabled = not running
@@ -848,6 +927,156 @@ class SimCortexLogic(ScriptedLoadableModuleLogic):
         if not session:
             return "ses-01"
         return session if session.startswith("ses-") else "ses-" + session
+
+    def validateDockerParameters(self, params):
+        if not params.get("dockerImage", "").strip():
+            return False, "Docker image is required."
+
+        if not params.get("assetsRoot", "").strip():
+            return False, "Pretrained assets directory is required."
+
+        if not os.path.isdir(params["assetsRoot"]):
+            return False, "Pretrained assets directory does not exist:\n" + params["assetsRoot"]
+
+        assets = self.getAssetsPaths(params["assetsRoot"])
+        assetsRoot = assets.get("assetsRoot", params["assetsRoot"])
+
+        requiredFiles = [
+            ("MNI template", os.path.join(assetsRoot, "MNI152_T1_1mm.nii.gz")),
+            ("Segmentation checkpoint", os.path.join(assetsRoot, "seg", "seg_best_dice.pt")),
+            ("Deform checkpoint", os.path.join(assetsRoot, "deform", "deform_best_model.pth")),
+        ]
+
+        missing = []
+        for label, filePath in requiredFiles:
+            if not os.path.isfile(filePath):
+                missing.append(label + ": " + filePath)
+
+        if missing:
+            return (
+                False,
+                "Missing pretrained asset files:\n"
+                + "\n".join(missing)
+                + "\n\nSelected assets root:\n"
+                + assetsRoot,
+            )
+
+        return True, ""
+
+    def runProcessAndCapture(self, program, args, timeoutMs=120000, workingDirectory=None):
+        process = qt.QProcess()
+        process.setProcessChannelMode(qt.QProcess.SeparateChannels)
+        process.setProcessEnvironment(qt.QProcessEnvironment.systemEnvironment())
+
+        if workingDirectory:
+            process.setWorkingDirectory(workingDirectory)
+
+        process.start(program, args)
+
+        if not process.waitForStarted(15000):
+            return False, "Could not start process:\n" + program
+
+        if not process.waitForFinished(timeoutMs):
+            process.kill()
+            process.waitForFinished(3000)
+            return False, "Process timed out:\n" + program + " " + " ".join(args)
+
+        stdout = self._qByteArrayToString(process.readAllStandardOutput())
+        stderr = self._qByteArrayToString(process.readAllStandardError())
+
+        output = ""
+        if stdout.strip():
+            output += stdout
+        if stderr.strip():
+            if output:
+                output += "\n"
+            output += stderr
+
+        if process.exitStatus() != qt.QProcess.NormalExit or process.exitCode() != 0:
+            output += "\nExit code: " + str(process.exitCode())
+            return False, output
+
+        return True, output
+
+    def validateDockerEnvironment(self, dockerImage, device):
+        dockerImage = dockerImage.strip()
+        device = device.strip()
+
+        messages = []
+
+        ok, output = self.runProcessAndCapture("docker", ["--version"], timeoutMs=30000)
+        messages.append("$ docker --version")
+        messages.append(output.strip())
+        if not ok:
+            messages.append(
+                "\nDocker was not found or could not be started. "
+                "Install Docker or launch Slicer from an environment where docker is on PATH."
+            )
+            return False, "\n".join(messages)
+
+        ok, output = self.runProcessAndCapture(
+            "docker", ["image", "inspect", dockerImage], timeoutMs=30000
+        )
+        messages.append("\n$ docker image inspect " + dockerImage)
+        if ok:
+            messages.append("Docker image found.")
+        else:
+            messages.append(output.strip())
+            messages.append("\nDocker image was not found locally: " + dockerImage)
+            return False, "\n".join(messages)
+
+        validationCode = """
+import sys
+import torch
+import monai
+import pytorch3d
+import ants
+import trimesh
+import hydra
+import simcortex
+
+requested_device = sys.argv[1]
+
+print("Python:", sys.version.replace("\\n", " "))
+print("torch:", torch.__version__)
+print("monai:", monai.__version__)
+print("pytorch3d:", pytorch3d.__version__)
+print("ants:", ants.__version__)
+print("trimesh:", trimesh.__version__)
+print("hydra:", hydra.__version__)
+print("Requested device:", requested_device)
+print("CUDA available:", torch.cuda.is_available())
+print("CUDA device count:", torch.cuda.device_count())
+
+if requested_device.startswith("cuda"):
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA was requested, but torch.cuda.is_available() is False.")
+    if torch.cuda.device_count() < 1:
+        raise RuntimeError("CUDA was requested, but no CUDA device is visible inside Docker.")
+    print("Visible Docker CUDA device 0:", torch.cuda.get_device_name(0))
+
+print("SimCortex Docker backend import OK")
+"""
+
+        dockerArgs = ["run", "--rm"]
+
+        if device.startswith("cuda"):
+            hostGpuIndex = device.split(":")[1] if ":" in device else "0"
+            dockerArgs.extend(["--gpus", "device=" + hostGpuIndex])
+
+        dockerArgs.extend([dockerImage, "python", "-c", validationCode, device])
+
+        ok, output = self.runProcessAndCapture(
+            "docker", dockerArgs, timeoutMs=180000, workingDirectory=os.path.expanduser("~")
+        )
+
+        messages.append("\n$ docker run validation")
+        messages.append(output.strip())
+
+        if not ok:
+            return False, "\n".join(messages)
+
+        return True, "\n".join(messages)
 
     def validateBackendEnvironment(self, pythonExecutable, projectRoot, assetsRoot, device):
         validationCode = r'''
