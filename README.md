@@ -114,3 +114,7 @@ The extension is a lightweight Slicer frontend. By default, the SimCortex backen
 The Docker image contains the Python environment and SimCortex pipeline code. The pretrained model assets are downloaded separately and mounted into the container at runtime.
 
 A local Python backend is kept only for development and debugging.
+
+## License
+
+This extension is released under the Apache License 2.0.

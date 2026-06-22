@@ -29,3 +29,12 @@ runs/
 *.bak
 *.bak_*
 *.bak_phase*
+
+# Python generated files
+__pycache__/
+*.py[cod]
+
+# Local backup files
+*.bak
+*.bak_*
+*.backup
