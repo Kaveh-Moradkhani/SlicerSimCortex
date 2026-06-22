@@ -16,7 +16,7 @@ class SimCortex(ScriptedLoadableModule):
         self.parent.contributors = ["Kaveh Moradkhani, Sylvain Bouix"]
         self.parent.helpText = """
 SimCortex performs cortical surface reconstruction from native T1w MRI.
-
+f
 This Slicer module is a frontend. The deep learning backend runs in an
 external SimCortex Python environment, not inside Slicer's bundled Python.
 
@@ -73,7 +73,6 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.nativeInputWarningLabel.setWordWrap(True)
         self.nativeInputWarningLabel.text = (
             "Important: select the original native T1w MRI as input. "
-            "Do not select a SimCortex preprocessed MNI-space T1w volume."
         )
         inputFormLayout.addRow("", self.nativeInputWarningLabel)
 
@@ -86,12 +85,13 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
 
         settingsFormLayout = qt.QFormLayout(settingsCollapsibleButton)
 
-        self.assetsRootLineEdit = self.createPathSelector(
-            settingsFormLayout,
-            "Pretrained model/assets: ",
-            "/path/to/SimCortexV2_pretrained_weights",
-            self.onBrowseAssetsRoot,
+        self.modelAssetsInfoLabel = qt.QLabel()
+        self.modelAssetsInfoLabel.setWordWrap(True)
+        self.modelAssetsInfoLabel.text = (
+            "Pretrained SimCortex model assets are downloaded automatically "
+            "on first run and reused afterward."
         )
+        settingsFormLayout.addRow("Model assets: ", self.modelAssetsInfoLabel)
 
         self.outputRootLineEdit = self.createPathSelector(
             settingsFormLayout,
@@ -147,6 +147,13 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             "SimCortex project root: ",
             "/path/to/SimCortex",
             self.onBrowseProjectRoot,
+        )
+
+        self.assetsRootLineEdit = self.createPathSelector(
+            advancedFormLayout,
+            "Pretrained assets directory: ",
+            "",
+            self.onBrowseAssetsRoot,
         )
 
         self.exportNativeCheckBox = qt.QCheckBox()
