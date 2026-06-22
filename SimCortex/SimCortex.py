@@ -78,73 +78,85 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         inputFormLayout.addRow("", self.nativeInputWarningLabel)
 
         # -------------------------
-        # Backend settings section
+        # Public settings section
         # -------------------------
-        backendCollapsibleButton = ctk.ctkCollapsibleButton()
-        backendCollapsibleButton.text = "Backend settings"
-        self.layout.addWidget(backendCollapsibleButton)
+        settingsCollapsibleButton = ctk.ctkCollapsibleButton()
+        settingsCollapsibleButton.text = "Settings"
+        self.layout.addWidget(settingsCollapsibleButton)
 
-        backendFormLayout = qt.QFormLayout(backendCollapsibleButton)
-
-        self.backendModeComboBox = qt.QComboBox()
-        self.backendModeComboBox.addItems(["Local Python", "Docker"])
-        self.backendModeComboBox.setToolTip(
-            "Choose how SimCortex is executed. Docker mode runs SimCortex inside a Docker image."
-        )
-        backendFormLayout.addRow("Backend mode: ", self.backendModeComboBox)
-
-        self.dockerImageLineEdit = qt.QLineEdit()
-        self.dockerImageLineEdit.text = "kavehmoradkhani/simcortex:0.2.4"
-        self.dockerImageLineEdit.setToolTip(
-            "Docker image used for Docker backend mode, for example kavehmoradkhani/simcortex:0.2.4."
-        )
-        backendFormLayout.addRow("Docker image: ", self.dockerImageLineEdit)
-
-        self.pythonExecutableLineEdit = self.createPathSelector(
-            backendFormLayout,
-            "SimCortex Python: ",
-            "/path/to/simcortex-env/bin/python",
-            self.onBrowsePythonExecutable,
-        )
-
-        self.projectRootLineEdit = self.createPathSelector(
-            backendFormLayout,
-            "SimCortex project root: ",
-            "/path/to/SimCortex",
-            self.onBrowseProjectRoot,
-        )
+        settingsFormLayout = qt.QFormLayout(settingsCollapsibleButton)
 
         self.assetsRootLineEdit = self.createPathSelector(
-            backendFormLayout,
-            "Pretrained assets directory: ",
+            settingsFormLayout,
+            "Pretrained model/assets: ",
             "/path/to/SimCortexV2_pretrained_weights",
             self.onBrowseAssetsRoot,
         )
 
         self.outputRootLineEdit = self.createPathSelector(
-            backendFormLayout,
-            "Output root: ",
+            settingsFormLayout,
+            "Output folder: ",
             "/path/to/output_root",
             self.onBrowseOutputRoot,
         )
 
         self.deviceComboBox = qt.QComboBox()
         self.deviceComboBox.addItems(["cuda:0", "cuda:1", "cpu"])
-        self.deviceComboBox.setToolTip("Device used by the external SimCortex backend.")
-        backendFormLayout.addRow("Device: ", self.deviceComboBox)
+        self.deviceComboBox.setToolTip("GPU/CPU device used by SimCortex.")
+        settingsFormLayout.addRow("Device: ", self.deviceComboBox)
+
+        self.saveSettingsButton = qt.QPushButton("Save settings")
+        self.saveSettingsButton.setToolTip(
+            "Save model/assets folder, output folder, and device selection."
+        )
+        settingsFormLayout.addRow("", self.saveSettingsButton)
+
+        # -------------------------
+        # Advanced backend section
+        # -------------------------
+        advancedCollapsibleButton = ctk.ctkCollapsibleButton()
+        advancedCollapsibleButton.text = "Advanced Docker/backend settings"
+        advancedCollapsibleButton.collapsed = True
+        self.layout.addWidget(advancedCollapsibleButton)
+
+        advancedFormLayout = qt.QFormLayout(advancedCollapsibleButton)
+
+        self.backendModeComboBox = qt.QComboBox()
+        self.backendModeComboBox.addItems(["Docker", "Local Python"])
+        self.backendModeComboBox.setToolTip(
+            "Docker is recommended for public use. Local Python is only for development/debugging."
+        )
+        advancedFormLayout.addRow("Backend mode: ", self.backendModeComboBox)
+
+        self.dockerImageLineEdit = qt.QLineEdit()
+        self.dockerImageLineEdit.text = "kavehmoradkhani/simcortex:0.2.4"
+        self.dockerImageLineEdit.setToolTip(
+            "Public SimCortex Docker image used by the Docker backend."
+        )
+        advancedFormLayout.addRow("Docker image: ", self.dockerImageLineEdit)
+
+        self.pythonExecutableLineEdit = self.createPathSelector(
+            advancedFormLayout,
+            "SimCortex Python: ",
+            "/path/to/simcortex-env/bin/python",
+            self.onBrowsePythonExecutable,
+        )
+
+        self.projectRootLineEdit = self.createPathSelector(
+            advancedFormLayout,
+            "SimCortex project root: ",
+            "/path/to/SimCortex",
+            self.onBrowseProjectRoot,
+        )
 
         self.exportNativeCheckBox = qt.QCheckBox()
         self.exportNativeCheckBox.checked = True
         self.exportNativeCheckBox.setToolTip(
-            "Export final surfaces back to native scanner space for Slicer visualization."
+            "Export final surfaces back to native scanner space for Slicer visualization. Recommended: enabled."
         )
-        backendFormLayout.addRow("Export native surfaces: ", self.exportNativeCheckBox)
-
-        self.saveSettingsButton = qt.QPushButton("Save backend settings")
-        self.saveSettingsButton.setToolTip(
-            "Save backend paths and device selection so they are restored next time."
-        )
-        backendFormLayout.addRow("", self.saveSettingsButton)
+        advancedFormLayout.addRow("Export native surfaces: ", self.exportNativeCheckBox)
+        advancedCollapsibleButton.collapsed = True
+        advancedCollapsibleButton.hide()
 
         # -------------------------
         # Assets explanation
@@ -168,6 +180,8 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             "for a child folder named SimCortexV2_pretrained_weights."
         )
         assetsInfoLayout.addWidget(self.assetsInfoLabel)
+        assetsInfoCollapsibleButton.collapsed = True
+        assetsInfoCollapsibleButton.hide()
 
         # -------------------------
         # Run section
@@ -183,9 +197,10 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             "Check the external SimCortex Python environment and required dependencies."
         )
         runLayout.addWidget(self.validateBackendButton)
+        self.validateBackendButton.hide()
 
-        self.applyButton = qt.QPushButton("Apply")
-        self.applyButton.toolTip = "Run SimCortex on the selected native T1w MRI using the external backend environment."
+        self.applyButton = qt.QPushButton("Run SimCortex")
+        self.applyButton.toolTip = "Run SimCortex on the selected native T1w MRI."
         self.applyButton.enabled = True
         runLayout.addWidget(self.applyButton)
 
@@ -224,8 +239,8 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
 
         self.log("SimCortex module loaded.")
         self.log("SimCortex extension is ready.")
-        self.log("Backend validation, pipeline execution, and RAS surface loading are available.")
-        self.log("Full pipeline execution is available via Apply.")
+        self.log("Docker backend is the recommended public mode.")
+        self.log("Select a native T1w MRI, pretrained assets, output folder, then click Run SimCortex.")
 
     def onBackendModeChanged(self, index):
         self.updateBackendModeUi()
@@ -340,7 +355,7 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
 
     def onSaveSettingsButton(self, checked=False):
         self.saveSettings()
-        self.log("Backend settings saved.")
+        self.log("Settings saved.")
 
     def saveSettings(self):
         settings = qt.QSettings()
@@ -368,12 +383,18 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         device = settings.value(prefix + "device", "")
         exportNative = settings.value(prefix + "exportNative", "")
 
-        if backendMode:
-            index = self.backendModeComboBox.findText(str(backendMode))
-            if index >= 0:
-                self.backendModeComboBox.setCurrentIndex(index)
+        # Public release uses Docker by default. Local Python remains only for internal development.
+        index = self.backendModeComboBox.findText("Docker")
+        if index >= 0:
+            self.backendModeComboBox.setCurrentIndex(index)
+        defaultDockerImage = "kavehmoradkhani/simcortex:0.2.4"
         if dockerImage:
-            self.dockerImageLineEdit.text = str(dockerImage)
+            dockerImageText = str(dockerImage).strip()
+            if dockerImageText in ["simcortex:0.2.3", "simcortex:0.2.4"]:
+                dockerImageText = defaultDockerImage
+            self.dockerImageLineEdit.text = dockerImageText
+        else:
+            self.dockerImageLineEdit.text = defaultDockerImage
 
         if pythonExecutable:
             self.pythonExecutableLineEdit.text = str(pythonExecutable)
