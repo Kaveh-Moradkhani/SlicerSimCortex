@@ -57,7 +57,14 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.inputVolumeSelector.showChildNodeTypes = False
         self.inputVolumeSelector.setMRMLScene(slicer.mrmlScene)
         self.inputVolumeSelector.setToolTip("Select the native T1w MRI volume.")
-        inputFormLayout.addRow("Input T1w volume: ", self.inputVolumeSelector)
+        inputVolumeLayout = qt.QHBoxLayout()
+        inputVolumeLayout.addWidget(self.inputVolumeSelector)
+
+        self.browseInputVolumeButton = qt.QPushButton("Browse")
+        self.browseInputVolumeButton.toolTip = "Load a native T1w MRI volume from disk."
+        inputVolumeLayout.addWidget(self.browseInputVolumeButton)
+
+        inputFormLayout.addRow("Input T1w volume: ", inputVolumeLayout)
 
         self.subjectLineEdit = qt.QLineEdit()
         self.subjectLineEdit.text = "sub-001"
@@ -231,6 +238,7 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.logTextEdit.setMinimumHeight(190)
         runLayout.addWidget(self.logTextEdit)
 
+        self.browseInputVolumeButton.connect("clicked(bool)", self.onBrowseInputVolume)
         self.validateBackendButton.connect("clicked(bool)", self.onValidateBackendButton)
         self.applyButton.connect("clicked(bool)", self.onApplyButton)
         self.cancelButton.connect("clicked(bool)", self.onCancelButton)
@@ -247,6 +255,38 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.log("SimCortex extension is ready.")
         self.log("Docker backend is the recommended public mode.")
         self.log("Select a native T1w MRI, pretrained assets, output folder, then click Run SimCortex.")
+
+    def onBrowseInputVolume(self, checked=False):
+        filePath = qt.QFileDialog.getOpenFileName(
+            slicer.util.mainWindow(),
+            "Select native T1w MRI volume",
+            "",
+            "Volume files (*.nii *.nii.gz *.nrrd *.nhdr *.mha *.mhd *.mgz *.mgh);;All files (*)",
+        )
+
+        if not filePath:
+            return
+
+        filePath = str(filePath)
+        self.log("Loading input T1w MRI:")
+        self.log(filePath)
+
+        try:
+            result = slicer.util.loadVolume(filePath, returnNode=True)
+            if isinstance(result, tuple):
+                success, volumeNode = result
+            else:
+                success = result is not None
+                volumeNode = result
+
+            if not success or volumeNode is None:
+                raise RuntimeError("Slicer could not load the selected volume.")
+
+            self.inputVolumeSelector.setCurrentNode(volumeNode)
+            self.log("Input T1w MRI loaded and selected.")
+        except Exception as exc:
+            slicer.util.errorDisplay("Failed to load input T1w MRI: " + str(exc))
+            self.log("Failed to load input T1w MRI: " + str(exc))
 
     def onBackendModeChanged(self, index):
         self.updateBackendModeUi()
