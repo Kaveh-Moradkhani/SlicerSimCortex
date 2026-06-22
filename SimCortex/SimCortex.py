@@ -454,17 +454,25 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             return
 
         progressRules = [
-            ("[preproc] started", 10, "Preprocessing"),
-            ("[preproc] finished", 25, "Preprocessing complete"),
-            ("[segmentation] started", 30, "Segmentation"),
-            ("[segmentation] finished", 45, "Segmentation complete"),
-            ("[initsurf] started", 50, "Initial surface generation"),
-            ("[initsurf] finished", 70, "Initial surfaces complete"),
-            ("[deform] started", 75, "Surface deformation"),
-            ("[deform] finished", 90, "Surface deformation complete"),
-            ("[collect] Copied", 94, "Collecting surfaces"),
-            ("[export-native] Manifest written", 97, "Exporting native surfaces"),
-            ("[export-native] Exported", 98, "Native export complete"),
+            ("Unable to find image", 2, "Preparing Docker image"),
+            ("Pulling from", 5, "Downloading SimCortex Docker image"),
+            ("Downloading", 10, "Downloading SimCortex Docker image"),
+            ("Extracting", 25, "Installing SimCortex Docker image"),
+            ("Pull complete", 35, "Docker image layer ready"),
+            ("Digest:", 40, "Docker image ready"),
+            ("Status: Downloaded newer image", 40, "Docker image ready"),
+            ("Status: Image is up to date", 40, "Docker image ready"),
+            ("[preproc] started", 45, "Preprocessing"),
+            ("[preproc] finished", 55, "Preprocessing complete"),
+            ("[segmentation] started", 60, "Segmentation"),
+            ("[segmentation] finished", 70, "Segmentation complete"),
+            ("[initsurf] started", 75, "Initial surface generation"),
+            ("[initsurf] finished", 85, "Initial surfaces complete"),
+            ("[deform] started", 88, "Surface deformation"),
+            ("[deform] finished", 94, "Surface deformation complete"),
+            ("[collect] Copied", 96, "Collecting surfaces"),
+            ("[export-native] Manifest written", 98, "Exporting native surfaces"),
+            ("[export-native] Exported", 99, "Native export complete"),
             ("Pipeline finished successfully", 99, "Pipeline complete"),
         ]
 
@@ -572,6 +580,10 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         assets = self.logic.getAssetsPaths(params["assetsRoot"])
         self.saveSettings()
 
+        if params["backendMode"] == "Docker" and not self.logic.dockerImageExists(params["dockerImage"]):
+            self.startDockerImagePull(params["dockerImage"])
+            return
+
         try:
             runInfo = self.logic.preparePipelineRun(params, assets)
         except Exception as exc:
@@ -618,6 +630,67 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             self.pipelineProcess = None
             slicer.util.errorDisplay("Failed to start SimCortex backend process.")
             self.log("Failed to start backend process.")
+
+    def startDockerImagePull(self, dockerImage):
+        self.log("")
+        self.log("SimCortex Docker image is not installed locally.")
+        self.log("Downloading SimCortex Docker image:")
+        self.log(dockerImage)
+        self.log("This can take several minutes on the first run.")
+        self.setProgress(0, "Preparing Docker image")
+
+        process = qt.QProcess()
+        process.setProcessChannelMode(qt.QProcess.SeparateChannels)
+        process.setProcessEnvironment(qt.QProcessEnvironment.systemEnvironment())
+
+        process.connect("readyReadStandardOutput()", self.onPipelineReadyReadStandardOutput)
+        process.connect("readyReadStandardError()", self.onPipelineReadyReadStandardError)
+        process.connect("finished(int, QProcess::ExitStatus)", self.onDockerImagePullFinished)
+
+        self.pipelineProcess = process
+        self.setRunning(True)
+
+        process.start("docker", ["pull", dockerImage])
+
+        if not process.waitForStarted(10000):
+            self.setRunning(False)
+            self.pipelineProcess = None
+            slicer.util.errorDisplay("Failed to start Docker image download.")
+            self.log("Failed to start Docker image download. Make sure Docker is installed and running.")
+
+    def onDockerImagePullFinished(self, exitCode, exitStatus):
+        self.setRunning(False)
+
+        if self.pipelineProcess is not None:
+            remainingStdout = self.qByteArrayToString(self.pipelineProcess.readAllStandardOutput())
+            remainingStderr = self.qByteArrayToString(self.pipelineProcess.readAllStandardError())
+            if remainingStdout:
+                self.updateProgressFromText(remainingStdout)
+                self.log(remainingStdout.rstrip())
+            if remainingStderr:
+                self.updateProgressFromText(remainingStderr)
+                self.log("STDERR: " + remainingStderr.rstrip())
+
+        self.pipelineProcess = None
+
+        self.log("")
+        self.log("Docker image download finished.")
+        self.log("Exit code: " + str(exitCode))
+
+        if exitCode != 0:
+            self.setProgress(0, "Docker image download failed")
+            slicer.util.errorDisplay(
+                "Failed to download the SimCortex Docker image. "
+                "Make sure Docker is installed, running, and has network access."
+            )
+            return
+
+        self.setProgress(40, "Docker image ready")
+        self.log("Docker image is ready. Starting SimCortex pipeline now.")
+
+        # Continue with the same Run workflow. The image now exists locally,
+        # so onApplyButton will proceed directly to pipeline execution.
+        self.onApplyButton()
 
     def onPipelineReadyReadStandardOutput(self):
         if self.pipelineProcess is None:
@@ -1165,6 +1238,20 @@ class SimCortexLogic(ScriptedLoadableModuleLogic):
             return False, output
 
         return True, output
+
+    def dockerImageExists(self, dockerImage):
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["docker", "image", "inspect", dockerImage],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=30,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
 
     def validateDockerEnvironment(self, dockerImage, device):
         dockerImage = dockerImage.strip()
