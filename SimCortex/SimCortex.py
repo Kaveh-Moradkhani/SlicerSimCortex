@@ -67,14 +67,12 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         inputFormLayout.addRow("Input T1w volume: ", inputVolumeLayout)
 
         self.subjectLineEdit = qt.QLineEdit()
-        self.subjectLineEdit.text = "sub-001"
-        self.subjectLineEdit.setToolTip("Subject ID used by SimCortex, for example sub-001.")
-        inputFormLayout.addRow("Subject ID: ", self.subjectLineEdit)
+        self.subjectLineEdit.text = ""
+        self.subjectLineEdit.setToolTip("Automatically generated from the selected input volume.")
 
         self.sessionLineEdit = qt.QLineEdit()
         self.sessionLineEdit.text = "ses-01"
-        self.sessionLineEdit.setToolTip("Session ID used by SimCortex, for example ses-01.")
-        inputFormLayout.addRow("Session ID: ", self.sessionLineEdit)
+        self.sessionLineEdit.setToolTip("Automatically generated from the selected input volume.")
 
         self.nativeInputWarningLabel = qt.QLabel()
         self.nativeInputWarningLabel.setWordWrap(True)
@@ -288,6 +286,82 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             slicer.util.errorDisplay("Failed to load input T1w MRI: " + str(exc))
             self.log("Failed to load input T1w MRI: " + str(exc))
 
+    def onBrowseInputVolume(self, checked=False):
+        filePath = qt.QFileDialog.getOpenFileName(
+            slicer.util.mainWindow(),
+            "Select native T1w MRI volume",
+            "",
+            "Volume files (*.nii *.nii.gz *.nrrd *.nhdr *.mha *.mhd *.mgz *.mgh);;All files (*)",
+        )
+
+        if not filePath:
+            return
+
+        filePath = str(filePath)
+        self.log("Loading input T1w MRI:")
+        self.log(filePath)
+
+        try:
+            result = slicer.util.loadVolume(filePath, returnNode=True)
+            if isinstance(result, tuple):
+                success, volumeNode = result
+            else:
+                success = result is not None
+                volumeNode = result
+
+            if not success or volumeNode is None:
+                raise RuntimeError("Slicer could not load the selected volume.")
+
+            self.inputVolumeSelector.setCurrentNode(volumeNode)
+            subject, session = self.getAutomaticSubjectSession()
+            self.subjectLineEdit.text = subject
+            self.sessionLineEdit.text = session
+            self.log("Input T1w MRI loaded and selected.")
+            self.log("Run ID: " + subject + " / " + session)
+        except Exception as exc:
+            slicer.util.errorDisplay("Failed to load input T1w MRI: " + str(exc))
+            self.log("Failed to load input T1w MRI: " + str(exc))
+
+    def getAutomaticSubjectSession(self):
+        import hashlib
+        import os
+        import re
+
+        volumeNode = self.inputVolumeSelector.currentNode()
+        if volumeNode is None:
+            return "sub-input", "ses-01"
+
+        sourceText = ""
+        storageNode = volumeNode.GetStorageNode()
+        if storageNode and storageNode.GetFileName():
+            sourceText = storageNode.GetFileName()
+        else:
+            sourceText = volumeNode.GetName() or "input"
+
+        base = os.path.basename(sourceText)
+        for ext in [".nii.gz", ".nii", ".nrrd", ".nhdr", ".mha", ".mhd", ".mgz", ".mgh"]:
+            if base.endswith(ext):
+                base = base[:-len(ext)]
+                break
+
+        subMatch = re.search(r"sub-([A-Za-z0-9]+)", base)
+        if subMatch:
+            subject = "sub-" + subMatch.group(1)
+        else:
+            safeBase = re.sub(r"[^A-Za-z0-9]+", "", base)
+            if not safeBase:
+                safeBase = "input"
+            digest = hashlib.md5(str(sourceText).encode("utf-8")).hexdigest()[:8]
+            subject = "sub-" + safeBase[:32] + digest
+
+        sesMatch = re.search(r"ses-([A-Za-z0-9]+)", base)
+        if sesMatch:
+            session = "ses-" + sesMatch.group(1)
+        else:
+            session = "ses-01"
+
+        return subject, session
+
     def onBackendModeChanged(self, index):
         self.updateBackendModeUi()
 
@@ -464,10 +538,15 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
     # Parameter collection
     # -------------------------
     def collectParameters(self):
+        subject, session = self.getAutomaticSubjectSession()
+
+        self.subjectLineEdit.text = subject
+        self.sessionLineEdit.text = session
+
         return {
             "inputVolume": self.inputVolumeSelector.currentNode(),
-            "subject": self.subjectLineEdit.text.strip(),
-            "session": self.sessionLineEdit.text.strip(),
+            "subject": subject,
+            "session": session,
             "backendMode": self.backendModeComboBox.currentText,
             "dockerImage": self.dockerImageLineEdit.text.strip(),
             "pythonExecutable": self.pythonExecutableLineEdit.text.strip(),
@@ -820,7 +899,19 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             self.log("Pipeline failed.")
 
 
+    def clearPreviousSimCortexSurfaceModels(self):
+        nodesToRemove = []
+        for node in slicer.util.getNodesByClass("vtkMRMLModelNode"):
+            if node.GetName().startswith("SimCortex_"):
+                nodesToRemove.append(node)
+
+        if nodesToRemove:
+            self.log("Removing previous SimCortex surface model(s) from the scene...")
+            for node in nodesToRemove:
+                slicer.mrmlScene.RemoveNode(node)
+
     def loadGeneratedSurfaces(self, runInfo):
+        self.clearPreviousSimCortexSurfaceModels()
         surfaceFiles = self.logic.getExpectedSurfaceFiles(runInfo)
 
         missing = [item["path"] for item in surfaceFiles if not os.path.isfile(item["path"])]
