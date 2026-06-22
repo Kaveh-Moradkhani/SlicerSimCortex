@@ -571,6 +571,22 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
 
         params = self.collectParameters()
 
+        ok, errorMessage = self.logic.validateBasicRunParameters(params)
+        if not ok:
+            slicer.util.errorDisplay(errorMessage)
+            self.log("Validation failed: " + errorMessage)
+            return
+
+        if params["backendMode"] == "Docker" and not self.logic.dockerImageExists(params["dockerImage"]):
+            self.startDockerImagePull(params["dockerImage"])
+            return
+
+        if params["backendMode"] == "Docker" and not self.logic.assetsAreValid(params["assetsRoot"]):
+            ok = self.downloadPretrainedAssetsForRun()
+            if not ok:
+                return
+            params = self.collectParameters()
+
         ok, errorMessage = self.logic.validateParameters(params)
         if not ok:
             slicer.util.errorDisplay(errorMessage)
@@ -579,10 +595,6 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
 
         assets = self.logic.getAssetsPaths(params["assetsRoot"])
         self.saveSettings()
-
-        if params["backendMode"] == "Docker" and not self.logic.dockerImageExists(params["dockerImage"]):
-            self.startDockerImagePull(params["dockerImage"])
-            return
 
         try:
             runInfo = self.logic.preparePipelineRun(params, assets)
@@ -630,6 +642,36 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
             self.pipelineProcess = None
             slicer.util.errorDisplay("Failed to start SimCortex backend process.")
             self.log("Failed to start backend process.")
+
+    def downloadPretrainedAssetsForRun(self):
+        self.log("")
+        self.log("SimCortex pretrained model/assets were not found.")
+        self.log("Downloading pretrained assets from Zenodo:")
+        self.log("https://zenodo.org/records/20767921")
+        self.log("This is required only once.")
+        self.setProgress(40, "Preparing pretrained assets")
+
+        try:
+            assetsRoot = self.logic.downloadPretrainedAssets(
+                logCallback=self.log,
+                progressCallback=self.setProgress,
+            )
+        except Exception as exc:
+            self.setProgress(0, "Pretrained assets download failed")
+            slicer.util.errorDisplay(
+                "Failed to download or prepare SimCortex pretrained assets. "
+                "See the log box for details."
+            )
+            self.log("Pretrained assets setup failed: " + str(exc))
+            return False
+
+        self.assetsRootLineEdit.text = assetsRoot
+        self.saveSettings()
+
+        self.setProgress(44, "Pretrained assets ready")
+        self.log("Pretrained assets are ready:")
+        self.log(assetsRoot)
+        return True
 
     def startDockerImagePull(self, dockerImage):
         self.log("")
@@ -1238,6 +1280,140 @@ class SimCortexLogic(ScriptedLoadableModuleLogic):
             return False, output
 
         return True, output
+
+    def validateBasicRunParameters(self, params):
+        if params.get("inputVolume") is None:
+            return False, "Please select an input T1w volume."
+
+        if not params.get("subject", "").strip():
+            return False, "Please enter a subject ID."
+
+        if not params.get("session", "").strip():
+            return False, "Please enter a session ID."
+
+        if not params.get("outputRoot", "").strip():
+            return False, "Please select an output folder."
+
+        return True, ""
+
+    def assetsAreValid(self, assetsRoot):
+        if not assetsRoot or not str(assetsRoot).strip():
+            return False
+
+        try:
+            assets = self.getAssetsPaths(assetsRoot)
+            required = [
+                assets["mniTemplate"],
+                assets["segCheckpoint"],
+                assets["deformCheckpoint"],
+            ]
+            return all(os.path.isfile(path) for path in required)
+        except Exception:
+            return False
+
+    def findValidAssetsRoot(self, searchRoot):
+        searchRoot = os.path.abspath(os.path.expanduser(searchRoot))
+        if self.assetsAreValid(searchRoot):
+            return searchRoot
+
+        for root, dirs, files in os.walk(searchRoot):
+            if self.assetsAreValid(root):
+                return root
+
+        return None
+
+    def downloadPretrainedAssets(self, logCallback=None, progressCallback=None):
+        import hashlib
+        import urllib.request
+        import zipfile
+
+        url = (
+            "https://zenodo.org/api/records/20767921/files/"
+            "SimCortexV2_pretrained_weights_v0.1.6.zip/content"
+        )
+        expectedMd5 = "8a512091d39299ab3ec36f8b0013673d"
+        filename = "SimCortexV2_pretrained_weights_v0.1.6.zip"
+
+        downloadRoot = os.path.join(
+            os.path.expanduser("~"),
+            ".slicersimcortex",
+            "assets",
+        )
+        os.makedirs(downloadRoot, exist_ok=True)
+
+        existingAssetsRoot = self.findValidAssetsRoot(downloadRoot)
+        if existingAssetsRoot:
+            if logCallback:
+                logCallback("Pretrained assets already exist in default cache.")
+            return existingAssetsRoot
+
+        zipPath = os.path.join(downloadRoot, filename)
+        tmpZipPath = zipPath + ".tmp"
+
+        def log(message):
+            if logCallback:
+                logCallback(message)
+
+        def progress(value, label):
+            if progressCallback:
+                progressCallback(value, label)
+
+        def md5sum(path):
+            h = hashlib.md5()
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(chunk)
+            return h.hexdigest()
+
+        if not os.path.isfile(zipPath) or md5sum(zipPath) != expectedMd5:
+            log("Downloading: " + url)
+            progress(40, "Downloading pretrained assets")
+
+            with urllib.request.urlopen(url) as response:
+                total = response.headers.get("Content-Length")
+                total = int(total) if total else 0
+                downloaded = 0
+
+                with open(tmpZipPath, "wb") as out:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        downloaded += len(chunk)
+
+                        if total > 0:
+                            percent = downloaded / float(total)
+                            value = 40 + int(percent * 3)
+                            progress(value, "Downloading pretrained assets")
+
+            os.replace(tmpZipPath, zipPath)
+
+        actualMd5 = md5sum(zipPath)
+        if actualMd5 != expectedMd5:
+            raise RuntimeError(
+                "Downloaded pretrained assets failed MD5 check. "
+                f"Expected {expectedMd5}, got {actualMd5}."
+            )
+
+        log("Pretrained assets archive downloaded and verified.")
+        progress(43, "Extracting pretrained assets")
+
+        with zipfile.ZipFile(zipPath, "r") as zf:
+            rootAbs = os.path.abspath(downloadRoot)
+            for member in zf.namelist():
+                target = os.path.abspath(os.path.join(downloadRoot, member))
+                if not target.startswith(rootAbs + os.sep) and target != rootAbs:
+                    raise RuntimeError("Unsafe path in pretrained assets zip: " + member)
+            zf.extractall(downloadRoot)
+
+        assetsRoot = self.findValidAssetsRoot(downloadRoot)
+        if not assetsRoot:
+            raise RuntimeError(
+                "Could not find expected pretrained asset files after extraction."
+            )
+
+        return assetsRoot
 
     def dockerImageExists(self, dockerImage):
         try:
