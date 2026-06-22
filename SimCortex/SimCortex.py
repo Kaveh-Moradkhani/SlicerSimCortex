@@ -88,8 +88,7 @@ class SimCortexWidget(ScriptedLoadableModuleWidget):
         self.modelAssetsInfoLabel = qt.QLabel()
         self.modelAssetsInfoLabel.setWordWrap(True)
         self.modelAssetsInfoLabel.text = (
-            "Pretrained SimCortex model assets are downloaded automatically "
-            "on first run and reused afterward."
+            "Downloaded automatically on first run."
         )
         settingsFormLayout.addRow("Model assets: ", self.modelAssetsInfoLabel)
 
