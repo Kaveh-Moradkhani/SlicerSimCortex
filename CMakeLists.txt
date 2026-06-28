@@ -8,7 +8,7 @@ set(EXTENSION_HOMEPAGE "https://github.com/Kaveh-Moradkhani/SlicerSimCortex")
 set(EXTENSION_CATEGORY "Surface Models")
 set(EXTENSION_CONTRIBUTORS "Kaveh Moradkhani, Sylvain Bouix")
 set(EXTENSION_DESCRIPTION "Generate collision-free cortical white and pial surfaces from native T1w MRI with SimCortex and load the results directly into 3D Slicer.")
-set(EXTENSION_ICONURL "https://raw.githubusercontent.com/Kaveh-Moradkhani/SlicerSimCortex/main/SlicerSimCortex.png")
+set(EXTENSION_ICONURL "https://raw.githubusercontent.com/Kaveh-Moradkhani/SlicerSimCortex/main/SimCortex/Resources/Icons/SimCortex.png")
 set(EXTENSION_SCREENSHOTURLS "https://raw.githubusercontent.com/Kaveh-Moradkhani/SlicerSimCortex/main/SimCortex/Resources/Icons/Screenshot.png")
 set(EXTENSION_DEPENDS "NA") # Specified as a list or "NA" if no dependencies
 
