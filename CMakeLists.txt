@@ -7,7 +7,7 @@ project(SimCortex)
 set(EXTENSION_HOMEPAGE "https://github.com/Kaveh-Moradkhani/SlicerSimCortex")
 set(EXTENSION_CATEGORY "Surface Models")
 set(EXTENSION_CONTRIBUTORS "Kaveh Moradkhani, Sylvain Bouix")
-set(EXTENSION_DESCRIPTION "Cortical white and pial surface reconstruction from native T1w MRI using SimCortex. The extension runs the Docker backend and loads the generated surfaces into Slicer.")
+set(EXTENSION_DESCRIPTION "Generate collision-free cortical white and pial surfaces from native T1w MRI with SimCortex and load the results directly into 3D Slicer.")
 set(EXTENSION_ICONURL "https://raw.githubusercontent.com/Kaveh-Moradkhani/SlicerSimCortex/main/SlicerSimCortex.png")
 set(EXTENSION_SCREENSHOTURLS "https://raw.githubusercontent.com/Kaveh-Moradkhani/SlicerSimCortex/main/SimCortex/Resources/Icons/Screenshot.png")
 set(EXTENSION_DEPENDS "NA") # Specified as a list or "NA" if no dependencies
